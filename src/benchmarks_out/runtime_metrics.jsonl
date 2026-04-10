@@ -1,0 +1,2 @@
+{"ts": "2026-04-10T18:57:12.190585+00:00", "metric": "route_confidence", "value": 0.82, "labels": {"route": "code_reasoning"}}
+{"ts": "2026-04-10T19:04:52.098877+00:00", "metric": "route_confidence", "value": 0.6, "labels": {"route": "main_model"}}

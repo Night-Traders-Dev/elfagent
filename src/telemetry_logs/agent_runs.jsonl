@@ -1,0 +1,20 @@
+{"ts": "2026-04-10T18:57:12.190237+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "query_start", "message": "New query received", "model": null}}
+{"ts": "2026-04-10T18:57:12.190420+00:00", "event_type": "query_start", "payload": {"query": "Give me hello world in PowerPc Assembly"}}
+{"ts": "2026-04-10T18:57:12.190489+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "route_selected", "message": "Selected code_reasoning (0.82)", "model": "qwen2.5:1.5b-instruct"}}
+{"ts": "2026-04-10T18:57:12.190529+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "model_selected", "message": "Using model qwen2.5-coder:7b", "model": "qwen2.5-coder:7b"}}
+{"ts": "2026-04-10T18:57:12.190558+00:00", "event_type": "route_selected", "payload": {"route": "code_reasoning", "confidence": 0.82, "reason": "coding intent"}}
+{"ts": "2026-04-10T18:57:12.190711+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "fast_path", "message": "Simple code request detected; bypassing helper handoff", "model": "qwen2.5:1.5b-instruct"}}
+{"ts": "2026-04-10T18:57:12.246339+00:00", "event_type": "event", "payload": {"event_name": "AgentInput"}}
+{"ts": "2026-04-10T18:57:32.446875+00:00", "event_type": "tool_call", "payload": {"tool_name": "code_interpreter", "tool_kwargs": "{'code': ''}"}}
+{"ts": "2026-04-10T18:57:32.464399+00:00", "event_type": "tool_result", "payload": {"tool_name": "code_interpreter", "output_preview": "StdOut:\nb''\nStdErr:\nb''"}}
+{"ts": "2026-04-10T18:57:32.470257+00:00", "event_type": "event", "payload": {"event_name": "AgentInput"}}
+{"ts": "2026-04-10T18:57:37.298705+00:00", "event_type": "agent_event", "payload": {"source": "main_model", "kind": "final", "message": "Final answer captured", "model": "qwen2.5-coder:7b"}}
+{"ts": "2026-04-10T18:57:37.302500+00:00", "event_type": "final_answer", "payload": {"elapsed_s": 25.108821276000526, "chars": 465, "route": "fast_code", "model": "qwen2.5-coder:7b"}}
+{"ts": "2026-04-10T19:04:52.098073+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "query_start", "message": "New query received", "model": null}}
+{"ts": "2026-04-10T19:04:52.098672+00:00", "event_type": "query_start", "payload": {"query": "exit"}}
+{"ts": "2026-04-10T19:04:52.098765+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "route_selected", "message": "Selected main_model (0.60)", "model": "qwen2.5:1.5b-instruct"}}
+{"ts": "2026-04-10T19:04:52.098813+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "model_selected", "message": "Using model qwen3.5:9b", "model": "qwen3.5:9b"}}
+{"ts": "2026-04-10T19:04:52.098845+00:00", "event_type": "route_selected", "payload": {"route": "main_model", "confidence": 0.6, "reason": "fallback synthesis path"}}
+{"ts": "2026-04-10T19:04:52.099112+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "escalation", "message": "Route confidence below threshold; escalating to main model", "model": "qwen2.5:1.5b-instruct"}}
+{"ts": "2026-04-10T19:04:52.099161+00:00", "event_type": "route_escalation", "payload": {"threshold": 0.75, "route": {"route": "main_model", "confidence": 0.6, "reason": "fallback synthesis path"}}}
+{"ts": "2026-04-10T19:04:52.141818+00:00", "event_type": "event", "payload": {"event_name": "AgentInput"}}
