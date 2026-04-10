@@ -258,8 +258,39 @@ async def main():
             break
         if not user_msg:
             continue
+
+        cmd_lower = user_msg.strip().lower()
+        if cmd_lower in ("/exit", "/quit"):
+            console.print("[yellow]Saving memory and exiting...[/yellow]")
+            try:
+                from core.config import MEMORY_PATH
+                agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+            except Exception as e:
+                console.print(f"[red]Failed to save memory: {e}[/red]")
+            break
+
+        if cmd_lower == "/compact":
+            console.print("[yellow]Forcing memory compaction...[/yellow]")
+            if hasattr(agent.memory, "force_compact"):
+                success, msg = agent.memory.force_compact()
+                if success:
+                    from core.config import MEMORY_PATH
+                    agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+                    console.print(f"[green]Success: {msg}[/green]")
+                else:
+                    console.print(f"[yellow]{msg}[/yellow]")
+            else:
+                console.print("[red]Current memory buffer does not support force compaction.[/red]")
+            continue
+
         local = await handle_local_command(user_msg, tools)
         if local == "quit":
+            console.print("[yellow]Saving memory and exiting...[/yellow]")
+            try:
+                from core.config import MEMORY_PATH
+                agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+            except Exception:
+                pass
             break
         if local == "handled":
             continue

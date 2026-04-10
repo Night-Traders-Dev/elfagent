@@ -94,6 +94,16 @@ class CompactingChatMemoryBuffer(ChatMemoryBuffer):
         return messages
 
 
+
+    def force_compact(self):
+        messages = self.chat_store.get_messages(self.chat_store_key)
+        if len(messages) < 10:
+            return False, "Not enough messages to compact (need at least 10)."
+
+        compacted = _compact_history(messages)
+        self.chat_store.set_messages(self.chat_store_key, compacted)
+        return True, f"Compacted {len(messages)} messages down to {len(compacted)}."
+
 def build_memory(chat_store: SimpleChatStore, token_limit: int = 8192) -> CompactingChatMemoryBuffer:
     """Builds the memory buffer from the chat store."""
     return CompactingChatMemoryBuffer.from_defaults(
