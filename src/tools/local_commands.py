@@ -16,8 +16,7 @@ def list_tool_names(tools):
 async def handle_local_command(user_msg, tools):
     raw = user_msg.strip(); cmd = raw.lower()
     if cmd == "/help":
-        return "Commands:\n/help\n/tools\n/clear\n/pwd\n/exit
-/compact\n/summarize-medical <text or file>\n/summarize-meeting <text or file>"
+        return "Commands:\n/help\n/tools\n/clear\n/pwd\n/exit\n/compact\n/summarize-medical <text or file>\n/summarize-meeting <text or file>"
     if cmd == "/tools":
         return "Loaded tools:\n- " + "\n- ".join(list_tool_names(tools))
     if cmd == "/pwd":
