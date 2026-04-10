@@ -1,2 +1,31 @@
 {"ts": "2026-04-10T18:57:12.190585+00:00", "metric": "route_confidence", "value": 0.82, "labels": {"route": "code_reasoning"}}
 {"ts": "2026-04-10T19:04:52.098877+00:00", "metric": "route_confidence", "value": 0.6, "labels": {"route": "main_model"}}
+{"ts": "2026-04-10T19:24:41.952207+00:00", "metric": "route_confidence", "value": 0.86, "labels": {"route": "web_research"}}
+{"ts": "2026-04-10T19:24:47.924919+00:00", "metric": "web_evidence_count", "value": 0, "labels": {}}
+{"ts": "2026-04-10T19:25:07.902557+00:00", "metric": "reasoning_chars", "value": 385, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:25:15.788569+00:00", "metric": "reasoning_chars", "value": 281, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:25:28.979662+00:00", "metric": "reasoning_chars", "value": 480, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:25:37.539492+00:00", "metric": "reasoning_chars", "value": 248, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:25:47.662961+00:00", "metric": "reasoning_chars", "value": 353, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:25:56.737406+00:00", "metric": "reasoning_chars", "value": 294, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:26:26.056159+00:00", "metric": "reasoning_chars", "value": 1322, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T19:27:08.630325+00:00", "metric": "reasoning_chars", "value": 885, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:03:24.052626+00:00", "metric": "route_confidence", "value": 0.86, "labels": {"route": "web_research"}}
+{"ts": "2026-04-10T20:03:29.585611+00:00", "metric": "web_evidence_count", "value": 0, "labels": {}}
+{"ts": "2026-04-10T20:03:47.459321+00:00", "metric": "reasoning_chars", "value": 235, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:03:58.495833+00:00", "metric": "reasoning_chars", "value": 247, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:04:07.853755+00:00", "metric": "reasoning_chars", "value": 226, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:04:18.270237+00:00", "metric": "reasoning_chars", "value": 209, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:04:30.751810+00:00", "metric": "reasoning_chars", "value": 334, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:04:46.053866+00:00", "metric": "reasoning_chars", "value": 302, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:05:11.579824+00:00", "metric": "reasoning_chars", "value": 657, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:05:52.183649+00:00", "metric": "route_confidence", "value": 0.6, "labels": {"route": "main_model"}}
+{"ts": "2026-04-10T20:06:07.166038+00:00", "metric": "reasoning_chars", "value": 658, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:06:18.384243+00:00", "metric": "reasoning_chars", "value": 378, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:06:31.172719+00:00", "metric": "reasoning_chars", "value": 450, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:06:40.746765+00:00", "metric": "reasoning_chars", "value": 303, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:06:54.664499+00:00", "metric": "reasoning_chars", "value": 534, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:07:05.931071+00:00", "metric": "reasoning_chars", "value": 346, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:07:20.716552+00:00", "metric": "reasoning_chars", "value": 610, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:07:40.229611+00:00", "metric": "reasoning_chars", "value": 865, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:07:57.131172+00:00", "metric": "reasoning_chars", "value": 683, "labels": {"source": "main_model"}}
