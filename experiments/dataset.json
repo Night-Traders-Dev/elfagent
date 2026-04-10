@@ -1,0 +1,5 @@
+[
+  {"query": "Find the latest RP2350 SDK docs", "expected_route": "web_research"},
+  {"query": "Refactor this Python stack trace handler", "expected_route": "code_reasoning"},
+  {"query": "Explain my architecture idea", "expected_route": "main_model"}
+]

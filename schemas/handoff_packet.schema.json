@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HandoffPacket",
+  "type": "object",
+  "required": ["user_query", "route", "payload", "instructions"],
+  "properties": {
+    "user_query": {"type": "string"},
+    "route": {
+      "type": "object",
+      "required": ["route", "confidence", "reason"],
+      "properties": {
+        "route": {"type": "string"},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"}
+      }
+    },
+    "payload": {"type": "object"},
+    "instructions": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}
