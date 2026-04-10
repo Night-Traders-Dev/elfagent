@@ -134,3 +134,14 @@
 {"ts": "2026-04-10T20:07:57.133185+00:00", "event_type": "tool_call", "payload": {"tool_name": "duckduckgo_instant_search", "tool_kwargs": "{'query': 'RTX 5060 recommended system specs'}"}}
 {"ts": "2026-04-10T20:07:58.771817+00:00", "event_type": "tool_result", "payload": {"tool_name": "duckduckgo_instant_search", "output_preview": ""}}
 {"ts": "2026-04-10T20:07:58.777791+00:00", "event_type": "event", "payload": {"event_name": "AgentInput"}}
+{"ts": "2026-04-10T20:41:49.928338+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "query_start", "message": "New query received", "model": null}}
+{"ts": "2026-04-10T20:41:49.928489+00:00", "event_type": "query_start", "payload": {"query": "How big is your context?"}}
+{"ts": "2026-04-10T20:41:49.928584+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "route_selected", "message": "Selected main_model (0.60)", "model": "phi3.5"}}
+{"ts": "2026-04-10T20:41:49.928631+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "model_selected", "message": "Using model qwen3.5:9b", "model": "qwen3.5:9b"}}
+{"ts": "2026-04-10T20:41:49.928661+00:00", "event_type": "route_selected", "payload": {"route": "main_model", "confidence": 0.6, "reason": "fallback synthesis path"}}
+{"ts": "2026-04-10T20:41:49.928736+00:00", "event_type": "agent_event", "payload": {"source": "router", "kind": "escalation", "message": "Route confidence below threshold; escalating to main model", "model": "phi3.5"}}
+{"ts": "2026-04-10T20:41:49.928779+00:00", "event_type": "route_escalation", "payload": {"threshold": 0.75, "route": {"route": "main_model", "confidence": 0.6, "reason": "fallback synthesis path"}}}
+{"ts": "2026-04-10T20:41:49.985270+00:00", "event_type": "event", "payload": {"event_name": "AgentInput"}}
+{"ts": "2026-04-10T20:42:25.242222+00:00", "event_type": "reasoning_update", "payload": {"source": "main_model", "event_name": "AgentOutput", "chars": 1077}}
+{"ts": "2026-04-10T20:42:25.256129+00:00", "event_type": "agent_event", "payload": {"source": "main_model", "kind": "final", "message": "Final answer captured", "model": "qwen3.5:9b"}}
+{"ts": "2026-04-10T20:42:25.261441+00:00", "event_type": "final_answer", "payload": {"elapsed_s": 35.89844526500019, "chars": 1775, "route": "main_model", "model": "qwen3.5:9b"}}

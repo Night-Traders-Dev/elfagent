@@ -29,3 +29,5 @@
 {"ts": "2026-04-10T20:07:20.716552+00:00", "metric": "reasoning_chars", "value": 610, "labels": {"source": "main_model"}}
 {"ts": "2026-04-10T20:07:40.229611+00:00", "metric": "reasoning_chars", "value": 865, "labels": {"source": "main_model"}}
 {"ts": "2026-04-10T20:07:57.131172+00:00", "metric": "reasoning_chars", "value": 683, "labels": {"source": "main_model"}}
+{"ts": "2026-04-10T20:41:49.928691+00:00", "metric": "route_confidence", "value": 0.6, "labels": {"route": "main_model"}}
+{"ts": "2026-04-10T20:42:25.242437+00:00", "metric": "reasoning_chars", "value": 1077, "labels": {"source": "main_model"}}
