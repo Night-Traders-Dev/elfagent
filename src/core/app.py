@@ -15,7 +15,7 @@ from llama_index.tools.code_interpreter.base import CodeInterpreterToolSpec
 from core.config import (
     MAIN_MODEL, CODE_MODEL, REFACTOR_MODEL, MEMORY_PATH, HF_CACHE_DIR,
     RICH_REFRESH_PER_SECOND, ROUTER_ESCALATION_THRESHOLD,
-    FAST_PATH_SIMPLE_CODE, MAX_FINAL_ANSWER_CHARS,
+    FAST_PATH_SIMPLE_CODE, MAX_FINAL_ANSWER_CHARS, PLAN_CHECKPOINT_PATH,
 )
 from core.engram import EngramStore
 from core.memory import init_chat_store, build_memory
@@ -35,12 +35,22 @@ from tools.structured_tools import parse_structured_file
 from tools.system_tools import system_info, list_serial_ports
 from tools.vision_tools import describe_image, ocr_image
 from tools.ast_tools import python_ast_query
+from tools.symbol_tools import list_c_symbols, list_asm_symbols, find_symbol_references, read_binary_symbols
 from ui.dashboard import RichDashboard
 from ui.events import extract_thinking_text, extract_tool_output, extract_response_text
 from utils.formatting import format_elapsed
 from routing.router import TaskRouter
 from routing.heuristics import is_complex_refactor_request, is_simple_code_request
 from reasoning.critic_reasoner import CriticReasoner
+from reasoning.task_planner import (
+    Plan,
+    PlanExecutor,
+    Step,
+    StepResult,
+    build_default_plan,
+    render_plan_status,
+    should_use_task_planner,
+)
 from reasoning.web_reasoner import WebReasoner
 from reasoning.code_reasoner import CodeReasoner
 from orchestration.handoff import build_handoff_packet
@@ -211,6 +221,22 @@ async def build_agent(
             description="Inspect a Python file's AST to list symbols, imports, or call sites."
         ))
         tools.append(FunctionTool.from_defaults(
+            fn=list_c_symbols, name="list_c_symbols",
+            description="List C/C++ functions, declarations, structs, enums, typedefs, and macros from source files."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=list_asm_symbols, name="list_asm_symbols",
+            description="List assembly labels, globals, and typed symbols from .s/.S/.asm files."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=find_symbol_references, name="find_symbol_references",
+            description="Find likely references to a C or ASM symbol across source files."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=read_binary_symbols, name="read_binary_symbols",
+            description="Read a binary, ELF, or object-file symbol table via nm."
+        ))
+        tools.append(FunctionTool.from_defaults(
             fn=parse_pdf, name="parse_pdf",
             description="Extract structured text from a local PDF with page-number annotations."
         ))
@@ -335,6 +361,174 @@ def persist_chat_store(chat_store):
     chat_store.persist(persist_path=MEMORY_PATH)
 
 
+async def execute_agent_prompt(agent_for_turn, agent_input: str, ui: RichDashboard) -> str:
+    handler = agent_for_turn.run(
+        user_msg=agent_input,
+        max_iterations=50,
+        early_stopping_method="generate",
+    )
+    response_holder = {"response": None}
+
+    async def run_response():
+        try:
+            response_holder["response"] = await handler
+        except Exception as exc:
+            telemetry.write("agent_error", {"error": str(exc)})
+            class _Fallback:
+                response = f"(Agent stopped early: {exc})"
+            response_holder["response"] = _Fallback()
+
+    event_task = asyncio.create_task(process_agent_events(handler, ui))
+    response_task = asyncio.create_task(run_response())
+
+    with Live(ui.render(), console=console, refresh_per_second=RICH_REFRESH_PER_SECOND, screen=True) as live:
+        while not response_task.done():
+            live.update(ui.render())
+            await asyncio.sleep(0.05)
+        await event_task
+        live.update(ui.render())
+
+    return extract_response_text(response_holder["response"]).strip() or "(No final response text returned.)"
+
+
+def build_plan_step_prompt(
+    user_msg: str,
+    route: dict,
+    payload: dict,
+    plan: Plan,
+    step: Step,
+) -> str:
+    completed_steps = "\n".join(
+        f"- {item.title}: {item.result[:800]}"
+        for item in plan.steps
+        if item.status == "done" and item.result
+    ) or "- No completed steps yet."
+    return (
+        "You are executing one tracked plan step for the user's request.\n\n"
+        f"User request:\n{user_msg}\n\n"
+        f"Route:\n{route}\n\n"
+        f"Normalized request:\n{payload.get('normalized')}\n\n"
+        f"Current plan status:\n{render_plan_status(plan)}\n\n"
+        f"Current step:\n- Title: {step.title}\n- Description: {step.description}\n\n"
+        f"Completed step results:\n{completed_steps}\n\n"
+        "Instructions:\n"
+        "1. Focus only on completing the current step.\n"
+        "2. Use tools as needed.\n"
+        "3. If the step order is wrong or you are blocked on missing context, "
+        "start the final answer with 'REVISE PLAN:' and explain what new step is needed.\n"
+        "4. Otherwise start the final answer with 'STEP DONE:' and summarize the work, "
+        "including any files changed or commands/tests run.\n"
+        "5. Be concrete and concise.\n"
+    )
+
+
+def build_plan_final_prompt(user_msg: str, route: dict, payload: dict, plan: Plan) -> str:
+    step_results = "\n".join(
+        f"- {step.title} [{step.status}]: {(step.result or step.error)[:1200]}"
+        for step in plan.steps
+    )
+    return (
+        "You have completed a tracked plan for the user's request.\n\n"
+        f"User request:\n{user_msg}\n\n"
+        f"Route:\n{route}\n\n"
+        f"Normalized request:\n{payload.get('normalized')}\n\n"
+        f"Final plan status:\n{render_plan_status(plan)}\n\n"
+        f"Step outcomes:\n{step_results}\n\n"
+        "Respond to the user with the actual result of the work. "
+        "Lead with what changed, then what was verified, then any remaining risk or blocker. "
+        "Do not narrate the internal plan machinery."
+    )
+
+
+async def execute_planned_turn(
+    user_msg: str,
+    route: dict,
+    payload: dict,
+    selected_model: str,
+    tools,
+    chat_store,
+    memory,
+    ui: RichDashboard,
+) -> str:
+    try:
+        plan = Plan.from_dict(payload.get("plan") or {})
+        if not plan.steps:
+            raise ValueError("empty plan")
+    except Exception:
+        plan = build_default_plan(user_msg)
+
+    async def run_step(step: Step, active_plan: Plan) -> StepResult:
+        step_index = active_plan.steps.index(step) + 1
+        emit_event(
+            ui,
+            "code_reasoner",
+            "plan_step",
+            f"Running plan step {step_index}/{len(active_plan.steps)}: {step.title}",
+            model=selected_model,
+        )
+        ui.set_phase(f"Plan step {step_index}/{len(active_plan.steps)}")
+        agent_for_step, _, _, _, _ = await build_agent(
+            selected_model,
+            preloaded_tools=tools,
+            chat_store=chat_store,
+            memory=memory,
+        )
+        step_prompt = build_plan_step_prompt(user_msg, route, payload, active_plan, step)
+        step_text = await execute_agent_prompt(agent_for_step, step_prompt, ui)
+        if step_text.lstrip().upper().startswith("REVISE PLAN:"):
+            reason = step_text.split(":", 1)[1].strip() or "The current plan needs another step."
+            return StepResult(status="revise", summary=reason)
+        return StepResult(status="done", summary=step_text)
+
+    def replan(active_plan: Plan, failed_step: Step, exc: Exception) -> Plan | None:
+        if active_plan.revision_count >= 2:
+            return None
+        reason = str(exc).strip() or f"Blocked while executing {failed_step.title}."
+        active_plan.notes.append(f"Revision after '{failed_step.title}': {reason}")
+        idx = active_plan.steps.index(failed_step)
+        failed_step.status = "pending"
+        failed_step.error = ""
+        recovery_title = f"Resolve blocker for {failed_step.title}"
+        already_present = any(
+            step.title == recovery_title and step.status != "done"
+            for step in active_plan.steps
+        )
+        if not already_present:
+            active_plan.steps.insert(
+                idx,
+                Step(
+                    title=recovery_title,
+                    description=reason[:240],
+                    status="pending",
+                ),
+            )
+        telemetry.write("plan_revision", {"step": failed_step.title, "reason": reason})
+        return active_plan
+
+    executor = PlanExecutor(
+        step_runner=run_step,
+        checkpoint_path=PLAN_CHECKPOINT_PATH,
+        replanner=replan,
+    )
+    completed_plan = await executor.run_async(plan)
+    emit_event(
+        ui,
+        "code_reasoner",
+        "plan_complete",
+        f"Completed plan with {len(completed_plan.steps)} step(s) and {completed_plan.revision_count} revision(s)",
+        model=selected_model,
+    )
+    ui.set_phase("Synthesizing planned result")
+    agent_for_turn, _, _, _, _ = await build_agent(
+        selected_model,
+        preloaded_tools=tools,
+        chat_store=chat_store,
+        memory=memory,
+    )
+    final_prompt = build_plan_final_prompt(user_msg, route, payload, completed_plan)
+    return await execute_agent_prompt(agent_for_turn, final_prompt, ui)
+
+
 async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
     started = time.perf_counter()
     span_cm = tracer.start_as_current_span("agent_turn") if tracer else None
@@ -404,6 +598,45 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             if engram_matches:
                 payload["engram_matches"] = engram_matches
             emit_event(ui, "code_reasoner", "analysis", f"Prepared code analysis with next step {payload.get('next_step')}", model=payload.get("model"))
+            if should_use_task_planner(user_msg, route, payload.get("normalized")):
+                telemetry.write("plan_execution", {"route": route.get("route"), "objective": user_msg[:200]})
+                final_text = await execute_planned_turn(
+                    user_msg=user_msg,
+                    route=route,
+                    payload=payload,
+                    selected_model=selected_model,
+                    tools=tools,
+                    chat_store=chat_store,
+                    memory=memory,
+                    ui=ui,
+                )
+                critic_review = critic_reasoner.review(final_text)
+                if not critic_review.get("ok", True):
+                    warnings = "\n".join(f"- {item}" for item in critic_review.get("findings", []))
+                    final_text = f"{final_text}\n\nCritic warnings:\n{warnings}"
+                    telemetry.write("critic_warning", critic_review)
+                if len(final_text) > MAX_FINAL_ANSWER_CHARS:
+                    final_text = final_text[:MAX_FINAL_ANSWER_CHARS].rstrip() + "\n\n[truncated]"
+                try:
+                    remembered = engram_store.remember(
+                        user_msg, final_text,
+                        route=route.get("route"),
+                        metadata={"model": selected_model, "planned": True},
+                    )
+                except Exception as exc:
+                    remembered = None
+                    telemetry.write("engram_error", {"phase": "remember", "error": str(exc)})
+                if remembered:
+                    telemetry.write("engram_write", {"route": remembered.get("route"), "terms": remembered.get("terms", [])})
+                ui.set_phase("Final answer ready")
+                emit_event(ui, "main_model", "final", "Final answer captured", model=selected_model)
+                total_elapsed = time.perf_counter() - started
+                console.print(Panel(
+                    Markdown(f"**Total query time:** {format_elapsed(total_elapsed)}\n\n{final_text}"),
+                    title="🤖 Final Answer", border_style="bright_green", box=box.ROUNDED, padding=(0, 1),
+                ))
+                telemetry.write("final_answer", {"elapsed_s": total_elapsed, "chars": len(final_text), "route": route.get("route"), "model": selected_model, "planned": True})
+                return
             handoff = build_handoff_packet(user_msg, route, payload)
             compression = handoff.get("payload", {}).get("turboquant", {})
             telemetry.write("code_handoff", {"next_step": payload.get('next_step')})
@@ -418,33 +651,7 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             chat_store=chat_store,
             memory=memory,
         )
-        handler = agent_for_turn.run(
-            user_msg=agent_input,
-            max_iterations=50,
-            early_stopping_method="generate",
-        )
-        response_holder = {"response": None}
-
-        async def run_response():
-            try:
-                response_holder["response"] = await handler
-            except Exception as exc:
-                telemetry.write("agent_error", {"error": str(exc)})
-                class _Fallback:
-                    response = f"(Agent stopped early: {exc})"
-                response_holder["response"] = _Fallback()
-
-        event_task = asyncio.create_task(process_agent_events(handler, ui))
-        response_task = asyncio.create_task(run_response())
-
-        with Live(ui.render(), console=console, refresh_per_second=RICH_REFRESH_PER_SECOND, screen=True) as live:
-            while not response_task.done():
-                live.update(ui.render())
-                await asyncio.sleep(0.05)
-            await event_task
-            live.update(ui.render())
-
-        final_text = extract_response_text(response_holder["response"]).strip() or "(No final response text returned.)"
+        final_text = await execute_agent_prompt(agent_for_turn, agent_input, ui)
         critic_review = critic_reasoner.review(final_text)
         if not critic_review.get("ok", True):
             warnings = "\n".join(f"- {item}" for item in critic_review.get("findings", []))
