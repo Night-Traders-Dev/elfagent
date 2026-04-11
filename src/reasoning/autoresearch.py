@@ -10,24 +10,39 @@ from helpers.search_helper import SearchHelper
 class AutoResearchWorkflow:
     def __init__(
         self,
-        search_tool,
+        search_tool=None,
         search_helper: SearchHelper | None = None,
         max_rounds: int = AUTORESEARCH_MAX_ROUNDS,
         max_queries_per_round: int = AUTORESEARCH_MAX_QUERIES_PER_ROUND,
         target_coverage: float = AUTORESEARCH_TARGET_COVERAGE,
     ):
         self.model_name = SEARCH_MODEL
-        self.search_tool = search_tool
+        # Use the multi-engine search adapter; fall back to whatever was passed
+        # (e.g. DuckDuckGoSearchToolSpec) so callers that pass a custom tool
+        # still work.
+        from tools.search_tools import MultiEngineSearch
+        self._multi_engine = MultiEngineSearch()
+        self._legacy_search_tool = search_tool  # kept for reference
         self.search_helper = search_helper or SearchHelper()
         self.max_rounds = max_rounds
         self.max_queries_per_round = max_queries_per_round
         self.target_coverage = target_coverage
 
     def _search_once(self, query: str) -> list[dict]:
+        """Run one search query, using multi-engine with DDG fallback."""
         try:
-            return self.search_tool.duckduckgo_full_search(query, max_results=8)
+            results = self._multi_engine.search(query, max_results=8)
+            if results:
+                return results
         except Exception:
-            return []
+            pass
+        # Last-ditch: try the legacy tool if it was provided
+        if self._legacy_search_tool is not None:
+            try:
+                return self._legacy_search_tool.duckduckgo_full_search(query, max_results=8)
+            except Exception:
+                pass
+        return []
 
     def run(self, query: str) -> dict:
         initial_queries = self.search_helper.build_queries(

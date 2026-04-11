@@ -23,6 +23,10 @@ from integrations.github_mcp import load_mcp_github_tools
 from tools.slurp_tools import slurp_url, slurp_to_obsidian
 from tools.summary_tools import summarize_medical_text, summarize_meeting_text
 from tools.local_commands import handle_local_command
+from tools.search_tools import web_search, wikipedia_search, brave_search
+from tools.file_tools import read_file, write_file, list_directory, grep_files
+from tools.shell_tools import run_shell_command, git_status, git_log
+from tools.datetime_tools import get_current_datetime, get_timezone_time
 from ui.dashboard import RichDashboard
 from ui.events import extract_thinking_text, extract_tool_output, extract_response_text
 from utils.formatting import format_elapsed
@@ -47,7 +51,13 @@ SYSTEM_PROMPT = (
     "For assembly (ARM, RISC-V, x86, PowerPC, MIPS, etc.), C, C++, Nim, Rust, "
     "Zig, Ruby, or any non-Python language, respond DIRECTLY with the code — "
     "do NOT attempt to run it with code_interpreter. "
-    "Only use code_interpreter when you need to compute, verify, or run actual Python."
+    "Only use code_interpreter when you need to compute, verify, or run actual Python.\n"
+    "Use web_search for general web queries; it automatically falls back across "
+    "multiple search engines if one is rate-limited.  "
+    "Use wikipedia_search for factual / encyclopaedic lookups.  "
+    "Use read_file / list_directory / grep_files to inspect project files.  "
+    "Use run_shell_command for builds, tests, and git operations (allowlisted).  "
+    "Use get_current_datetime when you need today's date or current time."
 )
 
 
@@ -64,8 +74,6 @@ def info_panel(message, color="yellow"):
 
 
 def build_runtime_profile(startup_model: str, tool_count: int, ddg_spec) -> dict:
-    # Read model names from class attributes / cheap properties only —
-    # never construct live reasoner instances here (would trigger model loads).
     return {
         "tool_count": tool_count,
         "hf_cache_dir": HF_CACHE_DIR,
@@ -94,16 +102,12 @@ def print_rich_banner(runtime_profile: dict):
 
 def emit_event(ui, source, kind, message, model=None, telemetry_kind="agent_event"):
     record = AgentEventRecord(source=source, kind=kind, message=message, model=model)
-    if source == "router":
-        style = "cyan"
-    elif source in {"web_reasoner", "code_reasoner"}:
-        style = "magenta"
-    elif source == "main_model":
-        style = "green"
-    elif source.startswith("tool"):
-        style = "yellow"
-    else:
-        style = "white"
+    style = {
+        "router": "cyan",
+        "web_reasoner": "magenta",
+        "code_reasoner": "magenta",
+        "main_model": "green",
+    }.get(source, "yellow" if source.startswith("tool") else "white")
     ui.log(f"[{source}] {message}", style)
     telemetry.write(telemetry_kind, {"source": record.source, "kind": record.kind, "message": record.message, "model": record.model})
 
@@ -136,14 +140,81 @@ async def build_agent(
         tools = preloaded_tools
     else:
         tools = []
+        # --- Legacy DDG tools (kept for compatibility; web_search supersedes them) ---
         tools.extend(ddg_spec.to_tool_list())
+        # --- Code interpreter ---
         tools.extend(CodeInterpreterToolSpec().to_tool_list())
-        tools.extend([
-            FunctionTool.from_defaults(fn=slurp_url, name="slurp_url", description="Fetch a webpage, extract readable main content, convert it to Markdown, and save it locally."),
-            FunctionTool.from_defaults(fn=slurp_to_obsidian, name="slurp_to_obsidian", description="Send a webpage URL to the Obsidian Slurp plugin using obsidian://slurp."),
-            FunctionTool.from_defaults(fn=summarize_medical_text, name="summarize_medical_text", description="Summarize medical or healthcare text using Falconsai/medical_summarization."),
-            FunctionTool.from_defaults(fn=summarize_meeting_text, name="summarize_meeting_text", description="Summarize meeting transcripts or dialogue; automatically chunks long transcripts before summarization."),
-        ])
+        # --- Multi-engine search ---
+        tools.append(FunctionTool.from_defaults(
+            fn=web_search, name="web_search",
+            description="Search the web using multiple engines (Brave, SearXNG, DuckDuckGo, Wikipedia) with automatic rate-limit failover."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=wikipedia_search, name="wikipedia_search",
+            description="Search Wikipedia and return article summaries for factual and encyclopaedic queries."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=brave_search, name="brave_search",
+            description="Search using the Brave Search API (requires BRAVE_API_KEY env var)."
+        ))
+        # --- Web fetch / slurp ---
+        tools.append(FunctionTool.from_defaults(
+            fn=slurp_url, name="slurp_url",
+            description="Fetch a webpage, extract readable main content, convert it to Markdown, and save it locally."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=slurp_to_obsidian, name="slurp_to_obsidian",
+            description="Send a webpage URL to the Obsidian Slurp plugin using obsidian://slurp."
+        ))
+        # --- Summarisation ---
+        tools.append(FunctionTool.from_defaults(
+            fn=summarize_medical_text, name="summarize_medical_text",
+            description="Summarize medical or healthcare text using Falconsai/medical_summarization."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=summarize_meeting_text, name="summarize_meeting_text",
+            description="Summarize meeting transcripts or dialogue; automatically chunks long transcripts."
+        ))
+        # --- File tools ---
+        tools.append(FunctionTool.from_defaults(
+            fn=read_file, name="read_file",
+            description="Read a text file from disk and return its contents."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=write_file, name="write_file",
+            description="Write content to a file on disk, creating parent directories as needed."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=list_directory, name="list_directory",
+            description="List files and directories at a given path with optional glob filtering."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=grep_files, name="grep_files",
+            description="Search for a regex pattern across files in a directory (like grep -rn)."
+        ))
+        # --- Shell tools ---
+        tools.append(FunctionTool.from_defaults(
+            fn=run_shell_command, name="run_shell_command",
+            description="Run an allowlisted shell command (git, make, gcc, pytest, etc.) and return output."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=git_status, name="git_status",
+            description="Run git status --short in the given directory."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=git_log, name="git_log",
+            description="Return the last N git log entries in oneline format."
+        ))
+        # --- Date/time ---
+        tools.append(FunctionTool.from_defaults(
+            fn=get_current_datetime, name="get_current_datetime",
+            description="Return the current UTC date and time. Use this whenever you need to know today's date."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=get_timezone_time, name="get_timezone_time",
+            description="Return the current time in a given IANA timezone (e.g. 'America/New_York')."
+        ))
+        # --- GitHub MCP ---
         tools.extend(await load_mcp_github_tools(info_panel))
     chat_store = chat_store or init_chat_store(MEMORY_PATH)
     memory = memory or build_memory(chat_store)
@@ -169,7 +240,6 @@ async def process_agent_events(handler, ui: RichDashboard):
                 telemetry.write("reasoning_update", {"source": source, "event_name": event_name, "chars": len(thought_text)})
                 runtime_metrics.emit("reasoning_chars", len(thought_text), {"source": source})
         elif event_name == "AgentStream":
-            # Wire streaming delta text into the dashboard answer panel.
             delta = (
                 getattr(event, "delta", None)
                 or getattr(event, "text", None)
@@ -353,7 +423,6 @@ async def main():
         if not user_msg:
             continue
 
-        # --- /compact handled before local_commands to use live memory ref ---
         if user_msg.strip().lower() == "/compact":
             console.print("[yellow]Forcing memory compaction...[/yellow]")
             if hasattr(memory, "force_compact"):
@@ -369,7 +438,6 @@ async def main():
 
         result = await handle_local_command(user_msg, tools)
         if result is None:
-            # Not a slash command — send to agent.
             await run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory)
         elif result[0] == "print":
             console.print(result[1])

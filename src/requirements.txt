@@ -1,5 +1,6 @@
 beautifulsoup4
 duckduckgo-search
+httpx
 llama-index
 llama-index-llms-ollama
 llama-index-tools-code-interpreter
@@ -21,3 +22,4 @@ opentelemetry-api
 opentelemetry-sdk
 sentence-transformers
 transformers>=5
+wikipedia-api
