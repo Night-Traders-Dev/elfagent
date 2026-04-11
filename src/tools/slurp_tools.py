@@ -1,1 +1,27 @@
-import osimport redef sanitize_filename(n: str) -> str:    return re.sub(r'[^a-zA-Z0-9_.-]', '_', n)def slurp_url(url: str, output_dir='slurps') -> str:    os.makedirs(output_dir, exist_ok=True)    from tools.browser_tools import browser_extract    tc = browser_extract(url)    if 'Error' in tc or 'failed' in tc:        return f'Failed to slurp {url}: {tc}'    safe_name = sanitize_filename(url) + '.txt'    out_path = os.path.join(output_dir, safe_name)    with open(out_path, 'w', encoding='utf-8') as f:        f.write(f'URL: {url}')        f.write(tc)    p = tc[:400] + '...' if len(tc) > 400 else tc    ret = f'Successfully slurped to {out_path}.'    return ret + f'Preview:{p}'def slurp_to_obsidian(url: str) -> str:    return 'Skipped for headless.'
+import os
+import re
+
+def sanitize_filename(n: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_.-]', '_', n)
+
+def slurp_url(url: str, output_dir='slurps') -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    from tools.browser_tools import browser_extract
+    tc = browser_extract(url)
+    if 'Error' in tc or 'failed' in tc:
+        return f'Failed to slurp {url}: {tc}'
+    safe_name = sanitize_filename(url) + '.txt'
+    out_path = os.path.join(output_dir, safe_name)
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(f'URL: {url}
+
+')
+        f.write(tc)
+    p = tc[:400] + '...' if len(tc) > 400 else tc
+    ret = f'Successfully slurped to {out_path}.
+'
+    return ret + f'Preview:
+{p}'
+
+def slurp_to_obsidian(url: str) -> str:
+    return 'Skipped for headless.'
