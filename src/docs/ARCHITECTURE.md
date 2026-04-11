@@ -7,13 +7,17 @@ router -> ultra-light helpers -> medium reasoning models -> main model
 ## Included techniques
 
 ### AutoResearch-inspired workflow
-This project adopts the *workflow philosophy* of AutoResearch by separating planning, experimentation, evaluation, and iterative improvement loops. It does **not** implement Karpathy's training harness itself.
+This project now implements an application-level AutoResearch loop for web research. `WebReasoner` delegates to an iterative planner that:
+- proposes an initial search plan
+- runs multiple search/evaluation rounds
+- measures query-term coverage
+- refines follow-up searches when evidence is thin
 
 ### TurboQuant
-TurboQuant is not directly implemented in Python here. It is referenced as a deployment/runtime optimization target for lower-memory inference stacks and future model-serving upgrades.
+TurboQuant is implemented here as a lightweight runtime compression layer for helper outputs and handoff packets. It trims snippets, limits evidence payloads, and quantizes structured context before the main model sees it.
 
 ### Engram / Engrams
-Engram-style memory is not implemented as a model architecture here. Instead, this project uses structured handoff packets and persistent chat memory as an application-level approximation for selective memory access.
+Engram-style memory is implemented here as a selective application-memory store. Each turn can persist a compact "engram" gist, and new turns retrieve only the most relevant prior engrams instead of replaying broad chat history.
 
 ### Direct Preference Optimization (DPO)
 DPO is a post-training alignment method. This codebase does not train or fine-tune models, so DPO is documented as a future tuning path for the router/helper models if you build a preference dataset.
@@ -21,9 +25,9 @@ DPO is a post-training alignment method. This codebase does not train or fine-tu
 ## Practical interpretation
 
 This repository uses these ideas as follows:
-- AutoResearch -> iterative agent improvement workflow and modular experimentation
-- TurboQuant -> future model serving / KV-cache compression target
-- Engram -> memory-oriented selective retrieval mindset
+- AutoResearch -> iterative search / evaluate / refine helper workflow
+- TurboQuant -> helper-context compression and prompt-budget control
+- Engram -> persistent selective memory retrieval for relevant prior turns
 - DPO -> future post-training alignment path for specialized helpers
 
 

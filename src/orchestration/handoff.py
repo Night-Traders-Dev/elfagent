@@ -1,4 +1,8 @@
+from core.turboquant import TurboQuantCompressor
 from orchestration.validation import validate_handoff_packet
+
+turboquant = TurboQuantCompressor()
+
 
 def build_handoff_packet(user_query: str, route: dict, payload: dict) -> dict:
     packet = {
@@ -11,5 +15,7 @@ def build_handoff_packet(user_query: str, route: dict, payload: dict) -> dict:
             "Prefer concise synthesis over raw dump.",
         ],
     }
-    validate_handoff_packet(packet)
-    return packet
+    compacted, compression_stats = turboquant.compact_packet(packet)
+    compacted.setdefault("payload", {})["turboquant"] = compression_stats
+    validate_handoff_packet(compacted)
+    return compacted

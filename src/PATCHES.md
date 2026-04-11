@@ -2,6 +2,15 @@
 
 ## Fixes applied against live main branch (April 10, 2026)
 
+### Feature 1 - AutoResearch workflow is now concrete (`reasoning/autoresearch.py`, `reasoning/web_reasoner.py`, `helpers/search_helper.py`)
+Web research now runs a real iterative search/evaluate/refine loop instead of a single raw-search pass. The helper tracks coverage of salient query terms and launches follow-up searches when evidence is thin.
+
+### Feature 2 - Engram selective memory layer (`core/engram.py`, `core/app.py`)
+Added a persistent JSONL engram store that saves compact turn gists and retrieves only relevant prior memories for the current request.
+
+### Feature 3 - TurboQuant runtime compression (`core/turboquant.py`, `orchestration/handoff.py`)
+Added a budget-aware compression path that trims snippets, caps evidence lists, and compacts structured handoff packets before they reach the main model.
+
 ### Bug 1 — Double MCP init / panel on every turn (`core/app.py`)
 `build_agent()` now accepts `preloaded_tools`. Per-turn agent rebuilds reuse the
 already-loaded tool list, so `load_mcp_github_tools` only runs once at startup.

@@ -17,6 +17,7 @@ from core.config import (
     RICH_REFRESH_PER_SECOND, ROUTER_ESCALATION_THRESHOLD,
     FAST_PATH_SIMPLE_CODE, MAX_FINAL_ANSWER_CHARS,
 )
+from core.engram import EngramStore
 from core.memory import init_chat_store, build_memory
 from integrations.github_mcp import load_mcp_github_tools
 from tools.slurp_tools import slurp_url, slurp_to_obsidian
@@ -38,6 +39,15 @@ console = Console()
 telemetry = JsonlTelemetryLogger()
 runtime_metrics = RuntimeMetrics()
 tracer, meter = setup_otel("elfagentplus-v4")
+engram_store = EngramStore()
+SYSTEM_PROMPT = (
+    "You are a helpful coding and research assistant. "
+    "The code_interpreter tool executes PYTHON ONLY. "
+    "For assembly (ARM, RISC-V, x86, PowerPC, MIPS, etc.), C, C++, Nim, Rust, "
+    "Zig, Ruby, or any non-Python language, respond DIRECTLY with the code — "
+    "do NOT attempt to run it with code_interpreter. "
+    "Only use code_interpreter when you need to compute, verify, or run actual Python."
+)
 
 @dataclass
 class AgentEventRecord:
@@ -96,7 +106,19 @@ def choose_main_model(user_msg: str, route: dict) -> str:
     return MAIN_MODEL
 
 
-async def build_agent(llm_model: str | None = None, preloaded_tools: list | None = None):
+def apply_engram_context(prompt: str, engram_matches: list[dict]) -> str:
+    memory_block = engram_store.format_for_prompt(engram_matches)
+    if not memory_block:
+        return prompt
+    return f"{memory_block}\n\nCurrent request:\n{prompt}"
+
+
+async def build_agent(
+    llm_model: str | None = None,
+    preloaded_tools: list | None = None,
+    chat_store=None,
+    memory=None,
+):
     selected_model = llm_model or MAIN_MODEL
     llm = Ollama(model=selected_model, request_timeout=180.0, context_window=16384)
     ddg_spec = DuckDuckGoSearchToolSpec()
@@ -113,19 +135,11 @@ async def build_agent(llm_model: str | None = None, preloaded_tools: list | None
             FunctionTool.from_defaults(fn=summarize_meeting_text, name="summarize_meeting_text", description="Summarize meeting transcripts or dialogue; automatically chunks long transcripts before summarization."),
         ])
         tools.extend(await load_mcp_github_tools(info_panel))
-    chat_store = init_chat_store(MEMORY_PATH)
-    memory = build_memory(chat_store)
-    SYSTEM_PROMPT = (
-        "You are a helpful coding and research assistant. "
-        "The code_interpreter tool executes PYTHON ONLY. "
-        "For assembly (ARM, RISC-V, x86, PowerPC, MIPS, etc.), C, C++, Nim, Rust, "
-        "Zig, Ruby, or any non-Python language, respond DIRECTLY with the code — "
-        "do NOT attempt to run it with code_interpreter. "
-        "Only use code_interpreter when you need to compute, verify, or run actual Python."
-    )
+    chat_store = chat_store or init_chat_store(MEMORY_PATH)
+    memory = memory or build_memory(chat_store)
     agent = ReActAgent(tools=tools, llm=llm, memory=memory, verbose=False,
                        system_prompt=SYSTEM_PROMPT)
-    return agent, chat_store, tools, ddg_spec
+    return agent, chat_store, memory, tools, ddg_spec
 
 
 async def process_agent_events(handler, ui: RichDashboard):
@@ -160,7 +174,11 @@ async def process_agent_events(handler, ui: RichDashboard):
             telemetry.write("event", {"event_name": event_name})
 
 
-async def run_turn_rich(agent, user_msg, ddg_spec, tools):
+def persist_chat_store(chat_store):
+    chat_store.persist(persist_path=MEMORY_PATH)
+
+
+async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
     started = time.perf_counter()
     span_cm = tracer.start_as_current_span("agent_turn") if tracer else None
     if span_cm:
@@ -171,6 +189,15 @@ async def run_turn_rich(agent, user_msg, ddg_spec, tools):
         ui.set_phase("Routing")
         emit_event(ui, "router", "query_start", "New query received")
         telemetry.write("query_start", {"query": user_msg})
+        try:
+            engram_matches = engram_store.retrieve(user_msg)
+        except Exception as exc:
+            engram_matches = []
+            telemetry.write("engram_error", {"phase": "retrieve", "error": str(exc)})
+        if engram_matches:
+            emit_event(ui, "router", "engram_recall", f"Loaded {len(engram_matches)} engrams for this turn")
+            telemetry.write("engram_recall", {"count": len(engram_matches), "query": user_msg[:200]})
+            runtime_metrics.emit("engram_hits", len(engram_matches))
 
         router = TaskRouter()
         route = router.route(user_msg)
@@ -183,30 +210,64 @@ async def run_turn_rich(agent, user_msg, ddg_spec, tools):
         if FAST_PATH_SIMPLE_CODE and is_simple_code_request(user_msg):
             route = {"route": "fast_code", "confidence": 1.0, "reason": "simple_code_fast_path"}
             emit_event(ui, "router", "fast_path", "Simple code request detected; bypassing helper handoff", model=router.model_name)
-            agent_input = user_msg + "\n\nKeep the answer concise. Provide only the code first, then 2-4 short bullets max."
+            agent_input = apply_engram_context(
+                user_msg + "\n\nKeep the answer concise. Provide only the code first, then 2-4 short bullets max.",
+                engram_matches,
+            )
         elif should_escalate(route, ROUTER_ESCALATION_THRESHOLD):
             emit_event(ui, "router", "escalation", "Route confidence below threshold; escalating to main model", model=router.model_name)
             telemetry.write("route_escalation", {"threshold": ROUTER_ESCALATION_THRESHOLD, "route": route})
-            agent_input = user_msg
+            agent_input = apply_engram_context(user_msg, engram_matches)
         elif route["route"] == "web_research":
             ui.set_phase("Ultra-light helpers")
             payload = await asyncio.to_thread(WebReasoner(ddg_spec).run, user_msg)
-            emit_event(ui, "web_reasoner", "evidence", f"Collected {len(payload.get('evidence', []))} evidence items", model=payload.get("model"))
+            if engram_matches:
+                payload["engram_matches"] = engram_matches
+            emit_event(
+                ui,
+                "web_reasoner",
+                "evidence",
+                (
+                    f"AutoResearch collected {len(payload.get('evidence', []))} evidence items "
+                    f"across {len(payload.get('rounds', []))} rounds"
+                ),
+                model=payload.get("model"),
+            )
             handoff = build_handoff_packet(user_msg, route, payload)
-            telemetry.write("web_handoff", {"evidence_count": len(payload.get('evidence', [])), "raw_result_count": payload.get('raw_result_count', 0)})
+            compression = handoff.get("payload", {}).get("turboquant", {})
+            telemetry.write(
+                "web_handoff",
+                {
+                    "evidence_count": len(payload.get('evidence', [])),
+                    "raw_result_count": payload.get('raw_result_count', 0),
+                    "rounds": len(payload.get("rounds", [])),
+                    "turboquant_saved_chars": compression.get("saved_chars", 0),
+                },
+            )
             runtime_metrics.emit("web_evidence_count", len(payload.get("evidence", [])))
+            runtime_metrics.emit("autoresearch_rounds", len(payload.get("rounds", [])))
+            runtime_metrics.emit("turboquant_saved_chars", compression.get("saved_chars", 0))
             agent_input = f"Use this structured handoff packet as context for your final response. Be concise and avoid repetition.\n\n{handoff}"
         elif route["route"] == "code_reasoning":
             ui.set_phase("Medium reasoning")
             payload = await asyncio.to_thread(CodeReasoner().run, user_msg)
+            if engram_matches:
+                payload["engram_matches"] = engram_matches
             emit_event(ui, "code_reasoner", "analysis", f"Prepared code analysis with next step {payload.get('next_step')}", model=payload.get("model"))
             handoff = build_handoff_packet(user_msg, route, payload)
+            compression = handoff.get("payload", {}).get("turboquant", {})
             telemetry.write("code_handoff", {"next_step": payload.get('next_step')})
+            runtime_metrics.emit("turboquant_saved_chars", compression.get("saved_chars", 0))
             agent_input = f"Use this structured handoff packet as context for your final response. Keep it short, practical, and non-repetitive.\n\n{handoff}"
         else:
-            agent_input = user_msg
+            agent_input = apply_engram_context(user_msg, engram_matches)
 
-        agent_for_turn, _, _, _ = await build_agent(selected_model, preloaded_tools=tools)
+        agent_for_turn, _, _, _, _ = await build_agent(
+            selected_model,
+            preloaded_tools=tools,
+            chat_store=chat_store,
+            memory=memory,
+        )
         handler = agent_for_turn.run(
             user_msg=agent_input,
             max_iterations=50,
@@ -236,6 +297,24 @@ async def run_turn_rich(agent, user_msg, ddg_spec, tools):
         final_text = extract_response_text(response_holder["response"]).strip() or "(No final response text returned.)"
         if len(final_text) > MAX_FINAL_ANSWER_CHARS:
             final_text = final_text[:MAX_FINAL_ANSWER_CHARS].rstrip() + "\n\n[truncated]"
+        try:
+            remembered = engram_store.remember(
+                user_msg,
+                final_text,
+                route=route.get("route"),
+                metadata={"model": selected_model},
+            )
+        except Exception as exc:
+            remembered = None
+            telemetry.write("engram_error", {"phase": "remember", "error": str(exc)})
+        if remembered:
+            telemetry.write(
+                "engram_write",
+                {
+                    "route": remembered.get("route"),
+                    "terms": remembered.get("terms", []),
+                },
+            )
 
         ui.set_phase("Final answer ready")
         emit_event(ui, "main_model", "final", "Final answer captured", model=selected_model)
@@ -248,7 +327,7 @@ async def run_turn_rich(agent, user_msg, ddg_spec, tools):
 
 
 async def main():
-    agent, _, tools, ddg_spec = await build_agent(MAIN_MODEL)
+    _, chat_store, memory, tools, ddg_spec = await build_agent(MAIN_MODEL)
     print_rich_banner(len(tools))
     while True:
         try:
@@ -263,19 +342,17 @@ async def main():
         if cmd_lower in ("/exit", "/quit"):
             console.print("[yellow]Saving memory and exiting...[/yellow]")
             try:
-                from core.config import MEMORY_PATH
-                agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+                persist_chat_store(chat_store)
             except Exception as e:
                 console.print(f"[red]Failed to save memory: {e}[/red]")
             break
 
         if cmd_lower == "/compact":
             console.print("[yellow]Forcing memory compaction...[/yellow]")
-            if hasattr(agent.memory, "force_compact"):
-                success, msg = agent.memory.force_compact()
+            if hasattr(memory, "force_compact"):
+                success, msg = memory.force_compact()
                 if success:
-                    from core.config import MEMORY_PATH
-                    agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+                    persist_chat_store(chat_store)
                     console.print(f"[green]Success: {msg}[/green]")
                 else:
                     console.print(f"[yellow]{msg}[/yellow]")
@@ -287,11 +364,10 @@ async def main():
         if local == "quit":
             console.print("[yellow]Saving memory and exiting...[/yellow]")
             try:
-                from core.config import MEMORY_PATH
-                agent.memory.chat_store.persist(persist_path=MEMORY_PATH)
+                persist_chat_store(chat_store)
             except Exception:
                 pass
             break
         if local == "handled":
             continue
-        await run_turn_rich(agent, user_msg, ddg_spec, tools)
+        await run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory)
