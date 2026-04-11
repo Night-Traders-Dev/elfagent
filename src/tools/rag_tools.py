@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.config import EMBEDDING_MODEL_ID, HF_CACHE_DIR, RAG_INDEX_PATH
+from core.config import EMBEDDING_DEVICE, EMBEDDING_MODEL_ID, HF_CACHE_DIR, RAG_INDEX_PATH
 
 _BLOCKED_DIRS = {
     ".git",
@@ -41,6 +41,7 @@ _DEFAULT_EXTENSIONS = {
 }
 _INDEX_CACHE: dict[str, dict] = {}
 _EMBEDDING_MODEL = None
+_EMBEDDING_DEVICE = EMBEDDING_DEVICE
 
 
 @dataclass
@@ -132,7 +133,24 @@ def _get_embedding_model():
         return _EMBEDDING_MODEL
     from sentence_transformers import SentenceTransformer  # noqa: PLC0415
 
-    _EMBEDDING_MODEL = SentenceTransformer(EMBEDDING_MODEL_ID, cache_folder=HF_CACHE_DIR)
+    _EMBEDDING_MODEL = SentenceTransformer(
+        EMBEDDING_MODEL_ID,
+        cache_folder=HF_CACHE_DIR,
+        device=_EMBEDDING_DEVICE,
+    )
+    return _EMBEDDING_MODEL
+
+
+def _reload_embedding_model_on_cpu():
+    global _EMBEDDING_MODEL, _EMBEDDING_DEVICE
+    from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+
+    _EMBEDDING_DEVICE = "cpu"
+    _EMBEDDING_MODEL = SentenceTransformer(
+        EMBEDDING_MODEL_ID,
+        cache_folder=HF_CACHE_DIR,
+        device="cpu",
+    )
     return _EMBEDDING_MODEL
 
 
@@ -140,7 +158,11 @@ def _encode_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     model = _get_embedding_model()
-    vectors = model.encode(texts, show_progress_bar=False)
+    try:
+        vectors = model.encode(texts, show_progress_bar=False)
+    except RuntimeError:
+        model = _reload_embedding_model_on_cpu()
+        vectors = model.encode(texts, show_progress_bar=False)
     return [[float(value) for value in vector] for vector in vectors]
 
 

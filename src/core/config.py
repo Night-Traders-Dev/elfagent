@@ -26,6 +26,7 @@ USER_AGENT = "ElfAgent/3.0 (+https://github.com/)"
 MEDICAL_MODEL_ID = "Falconsai/medical_summarization"
 MEETING_MODEL_ID = "knkarthick/MEETING_SUMMARY"
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 VISION_MODEL = os.getenv("VISION_MODEL", "moondream2")
 VISION_OCR_MODEL = os.getenv("VISION_OCR_MODEL", VISION_MODEL)

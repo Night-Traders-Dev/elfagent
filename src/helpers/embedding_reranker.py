@@ -1,4 +1,4 @@
-from core.config import EMBEDDING_MODEL_ID, HF_CACHE_DIR
+from core.config import EMBEDDING_DEVICE, EMBEDDING_MODEL_ID, HF_CACHE_DIR
 
 # NOTE: `sentence_transformers` is intentionally NOT imported at module level.
 # Importing it triggers a CUDA device scan and torch initialisation even if no
@@ -16,13 +16,30 @@ class EmbeddingReranker:
     def __init__(self, model_name: str = EMBEDDING_MODEL_ID):
         self.model_name = model_name
         self._model = None
+        self._device = EMBEDDING_DEVICE
+
+    def _load_model(self, device: str):
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+
+        return SentenceTransformer(
+            self.model_name,
+            cache_folder=HF_CACHE_DIR,
+            device=device,
+        )
 
     def _get_model(self):
         if self._model is not None:
             return self._model
         try:
-            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-            self._model = SentenceTransformer(self.model_name, cache_folder=HF_CACHE_DIR)
+            self._model = self._load_model(self._device)
+        except Exception:  # noqa: BLE001
+            self._model = None
+        return self._model
+
+    def _reload_on_cpu(self):
+        self._device = "cpu"
+        try:
+            self._model = self._load_model("cpu")
         except Exception:  # noqa: BLE001
             self._model = None
         return self._model
@@ -39,8 +56,20 @@ class EmbeddingReranker:
             ])
             for r in results
         ]
-        q_emb = model.encode([query])[0]
-        d_embs = model.encode(docs)
+        try:
+            q_emb = model.encode([query])[0]
+            d_embs = model.encode(docs)
+        except RuntimeError:
+            model = self._reload_on_cpu()
+            if not model:
+                return results
+            try:
+                q_emb = model.encode([query])[0]
+                d_embs = model.encode(docs)
+            except Exception:  # noqa: BLE001
+                return results
+        except Exception:  # noqa: BLE001
+            return results
         scored = []
         for item, emb in zip(results, d_embs):
             score = float(
