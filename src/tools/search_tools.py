@@ -60,7 +60,7 @@ _searcher = MultiEngineSearch()
 def web_search(query: str, max_results: int = 5) -> str:
     results = _searcher.search(query, max_results)
     if not results:
-        return "Search returned no results. The headless browser may have been blocked."
+        return "Search returned no resuts. The headless browser may have been blocked."
     out = []
     for r in results:
         out.append(f"Title: {r['title']}\nURL: {r['url']}\nSnippet: {r['snippet']}\n---")
