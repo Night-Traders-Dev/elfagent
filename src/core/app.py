@@ -61,9 +61,28 @@ def info_panel(message, color="yellow"):
     console.print(Panel(message, border_style=color, box=box.ROUNDED))
 
 
-def print_rich_banner(tool_count):
+def build_runtime_profile(startup_model: str, tool_count: int, ddg_spec) -> dict:
+    return {
+        "tool_count": tool_count,
+        "hf_cache_dir": HF_CACHE_DIR,
+        "startup_model": startup_model,
+        "router_model": TaskRouter().model_name,
+        "web_model": WebReasoner(ddg_spec).model_name,
+        "code_model": CodeReasoner().model_name,
+        "refactor_model": REFACTOR_MODEL,
+    }
+
+
+def print_rich_banner(runtime_profile: dict):
     console.print(Panel(
-        f"🤖 ElfAgentPlusV4 Initialized\nLoaded tools: {tool_count}\nHugging Face cache: {HF_CACHE_DIR}\nChat/debug model: {MAIN_MODEL}\nCode model: {CODE_MODEL}\nRefactor model: {REFACTOR_MODEL}",
+        "🤖 ElfAgentPlusV4 Initialized\n"
+        f"Loaded tools: {runtime_profile['tool_count']}\n"
+        f"Hugging Face cache: {runtime_profile['hf_cache_dir']}\n"
+        f"Startup model: {runtime_profile['startup_model']}\n"
+        f"Router model: {runtime_profile['router_model']}\n"
+        f"Web helper model: {runtime_profile['web_model']}\n"
+        f"Code helper model: {runtime_profile['code_model']}\n"
+        f"Refactor model: {runtime_profile['refactor_model']}",
         border_style="bright_blue",
         box=box.ROUNDED,
     ))
@@ -327,8 +346,9 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
 
 
 async def main():
-    _, chat_store, memory, tools, ddg_spec = await build_agent(MAIN_MODEL)
-    print_rich_banner(len(tools))
+    startup_model = MAIN_MODEL
+    _, chat_store, memory, tools, ddg_spec = await build_agent(startup_model)
+    print_rich_banner(build_runtime_profile(startup_model, len(tools), ddg_spec))
     while True:
         try:
             user_msg = console.input("[bold cyan]elf_g > [/]").strip()
