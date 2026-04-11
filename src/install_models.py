@@ -13,6 +13,36 @@ from core.config import (
     USER_AGENT,
 )
 
+# Files required per loader kind – avoids pulling entire repo snapshots.
+_ALLOW_PATTERNS: dict[str, list[str]] = {
+    "transformers_seq2seq": [
+        "config.json",
+        "tokenizer*.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "spiece.model",
+        "vocab.json",
+        "merges.txt",
+        "*.safetensors",
+        "*.bin",
+        "generation_config.json",
+    ],
+    "sentence_transformer": [
+        "config.json",
+        "tokenizer*.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.txt",
+        "sentence_bert_config.json",
+        "modules.json",
+        "*.safetensors",
+        "*.bin",
+        "1_Pooling/config.json",
+    ],
+}
+
+_CACHE_POINTER_FILE = ".elfagent_cache"
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -46,18 +76,30 @@ def build_model_specs() -> tuple[ModelSpec, ...]:
 
 
 def configure_cache_env(cache_dir: str) -> str:
+    """Set env vars *and* write a pointer file so runtime config picks up the dir."""
     resolved = os.path.abspath(cache_dir)
     os.makedirs(resolved, exist_ok=True)
-    os.environ["HF_HOME"] = resolved
-    os.environ["HF_HUB_CACHE"] = resolved
-    os.environ["TRANSFORMERS_CACHE"] = resolved
-    os.environ["SENTENCE_TRANSFORMERS_HOME"] = resolved
+    for var in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+        os.environ[var] = resolved
+    # Write a pointer that core/config.py can read on next launch
+    try:
+        pointer = os.path.join(os.path.dirname(os.path.abspath(__file__)), _CACHE_POINTER_FILE)
+        with open(pointer, "w", encoding="utf-8") as fh:
+            fh.write(resolved)
+    except OSError:
+        pass
     return resolved
 
 
-def snapshot_model(spec: ModelSpec, cache_dir: str, force_download: bool, local_files_only: bool) -> str:
+def snapshot_model(
+    spec: ModelSpec,
+    cache_dir: str,
+    force_download: bool,
+    local_files_only: bool,
+) -> str:
     from huggingface_hub import snapshot_download
 
+    allow = _ALLOW_PATTERNS.get(spec.loader_kind)
     return snapshot_download(
         repo_id=spec.repo_id,
         repo_type="model",
@@ -65,6 +107,7 @@ def snapshot_model(spec: ModelSpec, cache_dir: str, force_download: bool, local_
         force_download=force_download,
         local_files_only=local_files_only,
         user_agent=USER_AGENT,
+        allow_patterns=allow,
     )
 
 
@@ -72,26 +115,14 @@ def verify_model(spec: ModelSpec, cache_dir: str) -> None:
     if spec.loader_kind == "transformers_seq2seq":
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        AutoTokenizer.from_pretrained(
-            spec.repo_id,
-            cache_dir=cache_dir,
-            local_files_only=True,
-        )
-        AutoModelForSeq2SeqLM.from_pretrained(
-            spec.repo_id,
-            cache_dir=cache_dir,
-            local_files_only=True,
-        )
+        AutoTokenizer.from_pretrained(spec.repo_id, cache_dir=cache_dir, local_files_only=True)
+        AutoModelForSeq2SeqLM.from_pretrained(spec.repo_id, cache_dir=cache_dir, local_files_only=True)
         return
 
     if spec.loader_kind == "sentence_transformer":
         from sentence_transformers import SentenceTransformer
 
-        SentenceTransformer(
-            spec.repo_id,
-            cache_folder=cache_dir,
-            local_files_only=True,
-        )
+        SentenceTransformer(spec.repo_id, cache_folder=cache_dir, local_files_only=True)
         return
 
     raise ValueError(f"Unknown loader kind: {spec.loader_kind}")
@@ -104,23 +135,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--cache-dir",
         default=HF_CACHE_DIR,
-        help="Directory to use for Hugging Face and Sentence Transformers caches.",
+        help=(
+            "Directory for Hugging Face and Sentence Transformers caches. "
+            "Also writes a .elfagent_cache file so the runtime uses the same path "
+            "without needing exported env vars."
+        ),
     )
-    parser.add_argument(
-        "--force-download",
-        action="store_true",
-        help="Re-download model snapshots even if they already exist in cache.",
-    )
-    parser.add_argument(
-        "--local-files-only",
-        action="store_true",
-        help="Do not make network requests; verify that all required files already exist locally.",
-    )
-    parser.add_argument(
-        "--skip-verify",
-        action="store_true",
-        help="Skip loader verification after downloading model snapshots.",
-    )
+    parser.add_argument("--force-download", action="store_true",
+                        help="Re-download even if cached.")
+    parser.add_argument("--local-files-only", action="store_true",
+                        help="No network requests; verify local files only.")
+    parser.add_argument("--skip-verify", action="store_true",
+                        help="Skip loader verification after download.")
     return parser.parse_args(argv)
 
 
@@ -153,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     if failures:
         print("\nModel install failed for:", file=sys.stderr)
         for failure in failures:
-            print(f"- {failure}", file=sys.stderr)
+            print(f"  - {failure}", file=sys.stderr)
         return 1
 
     print("All required model bundles are ready.")

@@ -50,6 +50,7 @@ SYSTEM_PROMPT = (
     "Only use code_interpreter when you need to compute, verify, or run actual Python."
 )
 
+
 @dataclass
 class AgentEventRecord:
     source: str
@@ -63,13 +64,15 @@ def info_panel(message, color="yellow"):
 
 
 def build_runtime_profile(startup_model: str, tool_count: int, ddg_spec) -> dict:
+    # Read model names from class attributes / cheap properties only —
+    # never construct live reasoner instances here (would trigger model loads).
     return {
         "tool_count": tool_count,
         "hf_cache_dir": HF_CACHE_DIR,
         "startup_model": startup_model,
-        "router_model": TaskRouter().model_name,
-        "web_model": WebReasoner(ddg_spec).model_name,
-        "code_model": CodeReasoner().model_name,
+        "router_model": TaskRouter.model_name,
+        "web_model": WebReasoner.model_name if hasattr(WebReasoner, "model_name") else "(web reasoner)",
+        "code_model": CodeReasoner.model_name if hasattr(CodeReasoner, "model_name") else CODE_MODEL,
         "refactor_model": REFACTOR_MODEL,
     }
 
@@ -155,11 +158,26 @@ async def process_agent_events(handler, ui: RichDashboard):
         if event_name in {"AgentOutput", "AgentThought", "ReasoningEvent", "ThinkingEvent"}:
             thought_text = extract_thinking_text(event)
             if thought_text:
-                source = getattr(event, "source", None) or getattr(event, "model_name", None) or getattr(event, "agent_name", None) or "main_model"
+                source = (
+                    getattr(event, "source", None)
+                    or getattr(event, "model_name", None)
+                    or getattr(event, "agent_name", None)
+                    or "main_model"
+                )
                 ui.set_phase(f"Reasoning: {source}")
                 ui.add_reasoning(f"[{source}] {thought_text[:1200]}")
                 telemetry.write("reasoning_update", {"source": source, "event_name": event_name, "chars": len(thought_text)})
                 runtime_metrics.emit("reasoning_chars", len(thought_text), {"source": source})
+        elif event_name == "AgentStream":
+            # Wire streaming delta text into the dashboard answer panel.
+            delta = (
+                getattr(event, "delta", None)
+                or getattr(event, "text", None)
+                or getattr(event, "response", None)
+                or ""
+            )
+            if delta and isinstance(delta, str):
+                ui.update_answer_stream(ui.answer_stream + delta)
         elif event_name == "ToolCall":
             ui.archive_reasoning()
             tool_name = getattr(event, "tool_name", "unknown")
@@ -174,7 +192,7 @@ async def process_agent_events(handler, ui: RichDashboard):
             ui.finish_tool(tool_name, output_text)
             telemetry.write("tool_result", {"tool_name": tool_name, "output_preview": output_text[:1000]})
             ui.add_reasoning(f"[tool:{tool_name}] {output_text[:800]}")
-        elif event_name in {"AgentStream", "StopEvent"}:
+        elif event_name == "StopEvent":
             continue
         else:
             ui.log(f"Event: {event_name}", "white")
@@ -231,26 +249,19 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             if engram_matches:
                 payload["engram_matches"] = engram_matches
             emit_event(
-                ui,
-                "web_reasoner",
-                "evidence",
-                (
-                    f"AutoResearch collected {len(payload.get('evidence', []))} evidence items "
-                    f"across {len(payload.get('rounds', []))} rounds"
-                ),
+                ui, "web_reasoner", "evidence",
+                f"AutoResearch collected {len(payload.get('evidence', []))} evidence items "
+                f"across {len(payload.get('rounds', []))} rounds",
                 model=payload.get("model"),
             )
             handoff = build_handoff_packet(user_msg, route, payload)
             compression = handoff.get("payload", {}).get("turboquant", {})
-            telemetry.write(
-                "web_handoff",
-                {
-                    "evidence_count": len(payload.get('evidence', [])),
-                    "raw_result_count": payload.get('raw_result_count', 0),
-                    "rounds": len(payload.get("rounds", [])),
-                    "turboquant_saved_chars": compression.get("saved_chars", 0),
-                },
-            )
+            telemetry.write("web_handoff", {
+                "evidence_count": len(payload.get('evidence', [])),
+                "raw_result_count": payload.get('raw_result_count', 0),
+                "rounds": len(payload.get("rounds", [])),
+                "turboquant_saved_chars": compression.get("saved_chars", 0),
+            })
             runtime_metrics.emit("web_evidence_count", len(payload.get("evidence", [])))
             runtime_metrics.emit("autoresearch_rounds", len(payload.get("rounds", [])))
             runtime_metrics.emit("turboquant_saved_chars", compression.get("saved_chars", 0))
@@ -306,8 +317,7 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             final_text = final_text[:MAX_FINAL_ANSWER_CHARS].rstrip() + "\n\n[truncated]"
         try:
             remembered = engram_store.remember(
-                user_msg,
-                final_text,
+                user_msg, final_text,
                 route=route.get("route"),
                 metadata={"model": selected_model},
             )
@@ -315,18 +325,15 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             remembered = None
             telemetry.write("engram_error", {"phase": "remember", "error": str(exc)})
         if remembered:
-            telemetry.write(
-                "engram_write",
-                {
-                    "route": remembered.get("route"),
-                    "terms": remembered.get("terms", []),
-                },
-            )
+            telemetry.write("engram_write", {"route": remembered.get("route"), "terms": remembered.get("terms", [])})
 
         ui.set_phase("Final answer ready")
         emit_event(ui, "main_model", "final", "Final answer captured", model=selected_model)
         total_elapsed = time.perf_counter() - started
-        console.print(Panel(Markdown(f"**Total query time:** {format_elapsed(total_elapsed)}\n\n{final_text}"), title="🤖 Final Answer", border_style="bright_green", box=box.ROUNDED, padding=(0, 1)))
+        console.print(Panel(
+            Markdown(f"**Total query time:** {format_elapsed(total_elapsed)}\n\n{final_text}"),
+            title="🤖 Final Answer", border_style="bright_green", box=box.ROUNDED, padding=(0, 1),
+        ))
         telemetry.write("final_answer", {"elapsed_s": total_elapsed, "chars": len(final_text), "route": route.get("route"), "model": selected_model})
     finally:
         if span_cm:
@@ -346,16 +353,8 @@ async def main():
         if not user_msg:
             continue
 
-        cmd_lower = user_msg.strip().lower()
-        if cmd_lower in ("/exit", "/quit"):
-            console.print("[yellow]Saving memory and exiting...[/yellow]")
-            try:
-                persist_chat_store(chat_store)
-            except Exception as e:
-                console.print(f"[red]Failed to save memory: {e}[/red]")
-            break
-
-        if cmd_lower == "/compact":
+        # --- /compact handled before local_commands to use live memory ref ---
+        if user_msg.strip().lower() == "/compact":
             console.print("[yellow]Forcing memory compaction...[/yellow]")
             if hasattr(memory, "force_compact"):
                 success, msg = memory.force_compact()
@@ -365,17 +364,21 @@ async def main():
                 else:
                     console.print(f"[yellow]{msg}[/yellow]")
             else:
-                console.print("[red]Current memory buffer does not support force compaction.[/red]")
+                console.print("[red]Memory buffer does not support force compaction.[/red]")
             continue
 
-        local = await handle_local_command(user_msg, tools)
-        if local == "quit":
+        result = await handle_local_command(user_msg, tools)
+        if result is None:
+            # Not a slash command — send to agent.
+            await run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory)
+        elif result[0] == "print":
+            console.print(result[1])
+        elif result[0] == "clear":
+            console.clear()
+        elif result[0] == "quit":
             console.print("[yellow]Saving memory and exiting...[/yellow]")
             try:
                 persist_chat_store(chat_store)
-            except Exception:
-                pass
+            except Exception as e:
+                console.print(f"[red]Failed to save memory: {e}[/red]")
             break
-        if local == "handled":
-            continue
-        await run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory)
