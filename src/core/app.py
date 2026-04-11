@@ -1,3 +1,6 @@
+from core.db_manager import AsyncDBManager
+_shared_dpo_db: AsyncDBManager | None = None
+
 import asyncio
 import time
 from dataclasses import dataclass
@@ -168,6 +171,7 @@ async def build_agent(
         # --- Multi-engine search ---
         tools.append(FunctionTool.from_defaults(
             fn=web_search, name="web_search",
+
             description="Search the web using multiple engines (Brave, SearXNG, DuckDuckGo, Wikipedia) with automatic rate-limit failover."
         ))
                 # --- Web fetch / slurp ---
@@ -322,6 +326,7 @@ async def process_agent_events(handler, ui: RichDashboard):
                 )
                 ui.set_phase(f"Reasoning: {source}")
                 ui.add_reasoning(f"[{source}] {thought_text[:1200]}")
+
                 telemetry.write("reasoning_update", {"source": source, "event_name": event_name, "chars": len(thought_text)})
                 runtime_metrics.emit("reasoning_chars", len(thought_text), {"source": source})
         elif event_name == "AgentStream":
@@ -354,7 +359,19 @@ async def process_agent_events(handler, ui: RichDashboard):
             telemetry.write("event", {"event_name": event_name})
 
 
-def persist_chat_store(chat_store):
+async def persist_chat_store(chat_store):
+    # DB CHAT HISTORY INJECTION
+    try:
+        global _shared_dpo_db
+        if _shared_dpo_db is None:
+            # First turn: initialise once and reuse for the lifetime of the process
+            _shared_dpo_db = AsyncDBManager(selected_model)
+            await _shared_dpo_db.setup()
+        for _m in chat_store.get_messages("user1"):
+            _r = getattr(_m.role, "value", str(_m.role))
+            await _shared_dpo_db.log_model_interaction("s", _r, _m.content or "")
+    except Exception:
+        pass
     chat_store.persist(persist_path=MEMORY_PATH)
 
 
@@ -499,8 +516,41 @@ async def execute_planned_turn(
                     status="pending",
                 ),
             )
-        telemetry.write("plan_revision", {"step": failed_step.title, "reason": reason})
-        return active_plan
+        # DPO REJECTION INJECTION
+    # Both _dpo_rejected and _dpo_chosen are LM-generated step descriptions,
+    # so this preference pair carries a real training signal.
+    try:
+        import asyncio as _asyncio
+
+        _dpo_prompt   = str(getattr(failed_step, "task", failed_step.description))
+        _dpo_rejected = failed_step.description   # original plan (led to failure)
+        _dpo_chosen   = reason[:240]              # recovery description (corrective)
+
+        async def _dpo_log():
+            global _shared_dpo_db
+            if _shared_dpo_db is None:
+                _shared_dpo_db = AsyncDBManager("router")
+                await _shared_dpo_db.setup()
+            await _shared_dpo_db.record_dpo_preference(
+                _dpo_prompt, _dpo_chosen, _dpo_rejected
+            )
+
+        def _on_dpo_done(_task):
+            # Surface errors to telemetry without ever raising — DPO logging
+            # must be fully transparent to the replanning control flow.
+            if not _task.cancelled() and _task.exception() is not None:
+                telemetry.write("dpo_log_error", {"error": str(_task.exception())})
+
+        try:
+            _loop = _asyncio.get_running_loop()
+            _t    = _loop.create_task(_dpo_log())
+            _t.add_done_callback(_on_dpo_done)
+        except RuntimeError:
+            pass  # No running event loop — skip silently
+    except Exception:
+        pass
+    telemetry.write("plan_revision", {"step": failed_step.title, "reason": reason})
+    return active_plan
 
     executor = PlanExecutor(
         step_runner=run_step,
@@ -550,6 +600,7 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
         router = TaskRouter()
         route = router.route(user_msg)
         selected_model = choose_main_model(user_msg, route)
+
         emit_event(ui, "router", "route_selected", f"Selected {route['route']} ({route['confidence']:.2f})", model=router.model_name)
         emit_event(ui, "router", "model_selected", f"Using model {selected_model}", model=selected_model)
         telemetry.write("route_selected", route)
@@ -557,12 +608,14 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
 
         if FAST_PATH_SIMPLE_CODE and is_simple_code_request(user_msg):
             route = {"route": "fast_code", "confidence": 1.0, "reason": "simple_code_fast_path"}
+
             emit_event(ui, "router", "fast_path", "Simple code request detected; bypassing helper handoff", model=router.model_name)
             agent_input = apply_engram_context(
                 user_msg + "\n\nKeep the answer concise. Provide only the code first, then 2-4 short bullets max.",
                 engram_matches,
             )
         elif should_escalate(route, ROUTER_ESCALATION_THRESHOLD):
+
             emit_event(ui, "router", "escalation", "Route confidence below threshold; escalating to main model", model=router.model_name)
             telemetry.write("route_escalation", {"threshold": ROUTER_ESCALATION_THRESHOLD, "route": route})
             agent_input = apply_engram_context(user_msg, engram_matches)
@@ -588,12 +641,14 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             runtime_metrics.emit("web_evidence_count", len(payload.get("evidence", [])))
             runtime_metrics.emit("autoresearch_rounds", len(payload.get("rounds", [])))
             runtime_metrics.emit("turboquant_saved_chars", compression.get("saved_chars", 0))
+
             agent_input = f"Use this structured handoff packet as context for your final response. Be concise and avoid repetition.\n\n{handoff}"
         elif route["route"] == "code_reasoning":
             ui.set_phase("Medium reasoning")
             payload = await asyncio.to_thread(CodeReasoner().run, user_msg)
             if engram_matches:
                 payload["engram_matches"] = engram_matches
+
             emit_event(ui, "code_reasoner", "analysis", f"Prepared code analysis with next step {payload.get('next_step')}", model=payload.get("model"))
             if should_use_task_planner(user_msg, route, payload.get("normalized")):
                 telemetry.write("plan_execution", {"route": route.get("route"), "objective": user_msg[:200]})
@@ -624,6 +679,7 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
                     remembered = None
                     telemetry.write("engram_error", {"phase": "remember", "error": str(exc)})
                 if remembered:
+
                     telemetry.write("engram_write", {"route": remembered.get("route"), "terms": remembered.get("terms", [])})
                 ui.set_phase("Final answer ready")
                 emit_event(ui, "main_model", "final", "Final answer captured", model=selected_model)
@@ -632,12 +688,14 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
                     Markdown(f"**Total query time:** {format_elapsed(total_elapsed)}\n\n{final_text}"),
                     title="🤖 Final Answer", border_style="bright_green", box=box.ROUNDED, padding=(0, 1),
                 ))
+
                 telemetry.write("final_answer", {"elapsed_s": total_elapsed, "chars": len(final_text), "route": route.get("route"), "model": selected_model, "planned": True})
                 return
             handoff = build_handoff_packet(user_msg, route, payload)
             compression = handoff.get("payload", {}).get("turboquant", {})
             telemetry.write("code_handoff", {"next_step": payload.get('next_step')})
             runtime_metrics.emit("turboquant_saved_chars", compression.get("saved_chars", 0))
+
             agent_input = f"Use this structured handoff packet as context for your final response. Keep it short, practical, and non-repetitive.\n\n{handoff}"
         else:
             agent_input = apply_engram_context(user_msg, engram_matches)
@@ -675,6 +733,7 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             Markdown(f"**Total query time:** {format_elapsed(total_elapsed)}\n\n{final_text}"),
             title="🤖 Final Answer", border_style="bright_green", box=box.ROUNDED, padding=(0, 1),
         ))
+
         telemetry.write("final_answer", {"elapsed_s": total_elapsed, "chars": len(final_text), "route": route.get("route"), "model": selected_model})
     finally:
         if span_cm:
