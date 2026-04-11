@@ -158,14 +158,14 @@ def _scrape_fallback(query: str, max_results: int = 5) -> list[dict]:
         )
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
-        for div in soup.select(".result__body")[:max_results]:
-            a = div.select_one(".result__a")
-            snip = div.select_one(".result__snippet")
+        for div in soup.select("div.g")[:max_results]:
+            a = div.select_one("a")
+            snip = div.select_one("div.VwiC3b, div[data-sncf]")
             if not a:
                 continue
             href = a.get("href", "")
             results.append({
-                "title": a.get_text(strip=True),
+                "title": a.select_one("h3").get_text(strip=True) if a.select_one("h3") else a.get_text(strip=True),
                 "url": href,
                 "snippet": snip.get_text(strip=True) if snip else "",
                 "domain": "",
@@ -196,17 +196,17 @@ def _playwright(query: str, max_results: int = 8) -> list[dict]:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
-            page.goto(f"https://html.duckduckgo.com/html/?q={query}", timeout=15000)
+            page.goto(f"https://www.google.com/search?q={query}&hl=en", timeout=15000)            page.wait_for_timeout(1500)
 
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(page.content(), "lxml")
 
-            for div in soup.select(".result__body")[:max_results]:
-                a = div.select_one(".result__a")
-                snip = div.select_one(".result__snippet")
+            for div in soup.select("div.g")[:max_results]:
+                a = div.select_one("a")
+                snip = div.select_one("div.VwiC3b, div[data-sncf]")
                 if a and a.get("href"):
                     results.append({
-                        "title": a.get_text(strip=True),
+                        "title": a.select_one("h3").get_text(strip=True) if a.select_one("h3") else a.get_text(strip=True),
                         "url": a.get("href"),
                         "snippet": snip.get_text(strip=True) if snip else "",
                         "domain": "",
@@ -224,7 +224,7 @@ class MultiEngineSearch:
     for the ReAct agent.
     """
 
-    _ENGINE_ORDER = ["brave", "searxng", "ddg", "wikipedia", "playwright", "scrape_fallback"]
+    _ENGINE_ORDER = ["playwright"]
 
     def search(self, query: str, max_results: int = 8) -> list[dict]:
         for engine in self._ENGINE_ORDER:
