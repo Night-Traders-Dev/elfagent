@@ -196,7 +196,8 @@ def _playwright(query: str, max_results: int = 8) -> list[dict]:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
-            page.goto(f"https://www.google.com/search?q={query}&hl=en", timeout=15000)            page.wait_for_timeout(1500)
+            page.goto(f"https://www.google.com/search?q={query}&hl=en", timeout=15000)
+            page.wait_for_timeout(1500)
 
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(page.content(), "lxml")
