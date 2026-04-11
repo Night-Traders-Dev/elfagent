@@ -1,0 +1,32 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Virtualenvs and local environment files
+.env
+.env.*
+.venv/
+venv/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime state
+agent_memory.json
+agent_engrams.jsonl
+src/agent_memory.json
+src/agent_engrams.jsonl
+
+# Generated telemetry and benchmark outputs
+src/telemetry_logs/
+src/benchmarks_out/
+
+# Downloaded model artifacts
+src/model_cache/
+
+# OS/editor noise
+.DS_Store
