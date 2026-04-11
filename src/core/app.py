@@ -24,7 +24,7 @@ from tools.slurp_tools import slurp_url, slurp_to_obsidian
 from tools.browser_tools import browser_extract
 from tools.summary_tools import summarize_medical_text, summarize_meeting_text
 from tools.local_commands import handle_local_command
-from tools.search_tools import web_search, wikipedia_search, brave_search
+from tools.search_tools import web_search
 from tools.file_tools import read_file, write_file, list_directory, grep_files
 from tools.shell_tools import run_shell_command, git_status, git_log
 from tools.datetime_tools import get_current_datetime, get_timezone_time
@@ -169,14 +169,6 @@ async def build_agent(
         tools.append(FunctionTool.from_defaults(
             fn=web_search, name="web_search",
             description="Search the web using multiple engines (Brave, SearXNG, DuckDuckGo, Wikipedia) with automatic rate-limit failover."
-        ))
-        tools.append(FunctionTool.from_defaults(
-            fn=wikipedia_search, name="wikipedia_search",
-            description="Search Wikipedia and return article summaries for factual and encyclopaedic queries."
-        ))
-        tools.append(FunctionTool.from_defaults(
-            fn=brave_search, name="brave_search",
-            description="Search using the Brave Search API (requires BRAVE_API_KEY env var)."
         ))
                 # --- Web fetch / slurp ---
         tools.append(FunctionTool.from_defaults(
