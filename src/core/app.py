@@ -27,11 +27,20 @@ from tools.search_tools import web_search, wikipedia_search, brave_search
 from tools.file_tools import read_file, write_file, list_directory, grep_files
 from tools.shell_tools import run_shell_command, git_status, git_log
 from tools.datetime_tools import get_current_datetime, get_timezone_time
+from tools.doc_tools import parse_pdf, extract_pdf_tables
+from tools.http_tools import http_request
+from tools.patch_tools import apply_patch, create_diff
+from tools.rag_tools import index_directory, semantic_search
+from tools.structured_tools import parse_structured_file
+from tools.system_tools import system_info, list_serial_ports
+from tools.vision_tools import describe_image, ocr_image
+from tools.ast_tools import python_ast_query
 from ui.dashboard import RichDashboard
 from ui.events import extract_thinking_text, extract_tool_output, extract_response_text
 from utils.formatting import format_elapsed
 from routing.router import TaskRouter
 from routing.heuristics import is_complex_refactor_request, is_simple_code_request
+from reasoning.critic_reasoner import CriticReasoner
 from reasoning.web_reasoner import WebReasoner
 from reasoning.code_reasoner import CodeReasoner
 from orchestration.handoff import build_handoff_packet
@@ -45,6 +54,7 @@ telemetry = JsonlTelemetryLogger()
 runtime_metrics = RuntimeMetrics()
 tracer, meter = setup_otel("elfagentplus-v4")
 engram_store = EngramStore()
+critic_reasoner = CriticReasoner()
 SYSTEM_PROMPT = (
     "You are a helpful coding and research assistant. "
     "The code_interpreter tool executes PYTHON ONLY. "
@@ -192,6 +202,38 @@ async def build_agent(
             fn=grep_files, name="grep_files",
             description="Search for a regex pattern across files in a directory (like grep -rn)."
         ))
+        tools.append(FunctionTool.from_defaults(
+            fn=parse_structured_file, name="parse_structured_file",
+            description="Parse JSON, TOML, YAML, or CBOR files into normalized structured output."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=python_ast_query, name="python_ast_query",
+            description="Inspect a Python file's AST to list symbols, imports, or call sites."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=parse_pdf, name="parse_pdf",
+            description="Extract structured text from a local PDF with page-number annotations."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=extract_pdf_tables, name="extract_pdf_tables",
+            description="Extract tables from a local PDF using PyMuPDF's table detector."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=describe_image, name="describe_image",
+            description="Describe the contents of a local image using a local vision-capable Ollama model."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=ocr_image, name="ocr_image",
+            description="Extract visible text from a local image using a local vision-capable Ollama model."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=index_directory, name="index_directory",
+            description="Build a local semantic vector index for source code and documentation in a directory."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=semantic_search, name="semantic_search",
+            description="Search the local semantic index for code or document evidence before using the web."
+        ))
         # --- Shell tools ---
         tools.append(FunctionTool.from_defaults(
             fn=run_shell_command, name="run_shell_command",
@@ -204,6 +246,26 @@ async def build_agent(
         tools.append(FunctionTool.from_defaults(
             fn=git_log, name="git_log",
             description="Return the last N git log entries in oneline format."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=create_diff, name="create_diff",
+            description="Create a unified diff from two text blobs or two file paths."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=apply_patch, name="apply_patch",
+            description="Apply a unified diff in the current working directory using the patch tool."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=http_request, name="http_request",
+            description="Make HTTP GET, POST, PUT, PATCH, or DELETE requests to local or remote services."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=system_info, name="system_info",
+            description="Inspect the current machine's CPU, memory, disk, and top processes."
+        ))
+        tools.append(FunctionTool.from_defaults(
+            fn=list_serial_ports, name="list_serial_ports",
+            description="List likely serial devices such as /dev/ttyUSB* and /dev/ttyACM*."
         ))
         # --- Date/time ---
         tools.append(FunctionTool.from_defaults(
@@ -383,6 +445,11 @@ async def run_turn_rich(user_msg, ddg_spec, tools, chat_store, memory):
             live.update(ui.render())
 
         final_text = extract_response_text(response_holder["response"]).strip() or "(No final response text returned.)"
+        critic_review = critic_reasoner.review(final_text)
+        if not critic_review.get("ok", True):
+            warnings = "\n".join(f"- {item}" for item in critic_review.get("findings", []))
+            final_text = f"{final_text}\n\nCritic warnings:\n{warnings}"
+            telemetry.write("critic_warning", critic_review)
         if len(final_text) > MAX_FINAL_ANSWER_CHARS:
             final_text = final_text[:MAX_FINAL_ANSWER_CHARS].rstrip() + "\n\n[truncated]"
         try:

@@ -8,6 +8,7 @@ llama-index-tools-duckduckgo
 llama-index-tools-mcp
 lxml
 markdownify
+PyMuPDF
 python-dotenv
 pyyaml
 readability-lxml

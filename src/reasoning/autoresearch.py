@@ -55,6 +55,54 @@ class AutoResearchWorkflow:
         total_raw_results = 0
         pending_queries = initial_queries
 
+        try:
+            from tools.rag_tools import semantic_search_raw  # noqa: PLC0415
+
+            local_results = semantic_search_raw(query, top_k=3)
+        except Exception:
+            local_results = []
+
+        if local_results:
+            total_raw_results += len(local_results)
+            local_evidence = self.search_helper.compress_results(query, local_results, limit=3)
+            evidence = self.search_helper.merge_evidence(query, evidence, local_evidence, limit=6)
+            local_eval = self.search_helper.evaluate_coverage(query, evidence)
+            rounds.append({
+                "round": 0,
+                "source": "local_rag",
+                "queries": [query],
+                "result_counts": {"local_semantic_search": len(local_results)},
+                "new_evidence": local_evidence[:2],
+                "coverage_score": local_eval["coverage_score"],
+                "missing_terms": local_eval["missing_terms"][:4],
+                "notes": (
+                    f"Local semantic retrieval seeded {len(local_results)} result(s) "
+                    f"before web search. Coverage is now {local_eval['coverage_score']:.2f}."
+                ),
+            })
+
+            if (
+                local_eval["coverage_score"] >= self.target_coverage
+                or not local_eval["missing_terms"]
+            ):
+                return {
+                    "query": query,
+                    "workflow": "autoresearch",
+                    "plan": {
+                        "objective": query,
+                        "max_rounds": self.max_rounds,
+                        "target_coverage": self.target_coverage,
+                        "initial_queries": initial_queries,
+                        "local_rag_seeded": True,
+                    },
+                    "search_queries": executed_queries,
+                    "rounds": rounds,
+                    "evidence": evidence,
+                    "evaluation": local_eval,
+                    "model": self.model_name,
+                    "raw_result_count": total_raw_results,
+                }
+
         for round_idx in range(1, self.max_rounds + 1):
             current_queries = [
                 item for item in pending_queries
@@ -110,6 +158,7 @@ class AutoResearchWorkflow:
                 "max_rounds": self.max_rounds,
                 "target_coverage": self.target_coverage,
                 "initial_queries": initial_queries,
+                "local_rag_seeded": bool(local_results),
             },
             "search_queries": executed_queries,
             "rounds": rounds,

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from install_models import build_model_specs, configure_cache_env
 
@@ -15,12 +16,17 @@ class InstallModelsTests(unittest.TestCase):
 
     def test_configure_cache_env_sets_current_cache_vars(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            resolved = configure_cache_env(tmpdir)
-            self.assertTrue(os.path.isdir(resolved))
-            self.assertEqual(os.environ["HF_HOME"], resolved)
-            self.assertEqual(os.environ["HF_HUB_CACHE"], resolved)
-            self.assertEqual(os.environ["TRANSFORMERS_CACHE"], resolved)
-            self.assertEqual(os.environ["SENTENCE_TRANSFORMERS_HOME"], resolved)
+            pointer = Path(__file__).resolve().parent.parent / ".elfagent_cache"
+            try:
+                resolved = configure_cache_env(tmpdir)
+                self.assertTrue(os.path.isdir(resolved))
+                self.assertEqual(os.environ["HF_HOME"], resolved)
+                self.assertEqual(os.environ["HF_HUB_CACHE"], resolved)
+                self.assertEqual(os.environ["TRANSFORMERS_CACHE"], resolved)
+                self.assertEqual(os.environ["SENTENCE_TRANSFORMERS_HOME"], resolved)
+            finally:
+                if pointer.exists():
+                    pointer.unlink()
 
 
 if __name__ == "__main__":
