@@ -1,32 +1,33 @@
 from core.config import EMBEDDING_MODEL_ID, HF_CACHE_DIR
 
-try:
-    from sentence_transformers import SentenceTransformer
-    HAS_ST = True
-except ImportError:
-    SentenceTransformer = None
-    HAS_ST = False
+# NOTE: `sentence_transformers` is intentionally NOT imported at module level.
+# Importing it triggers a CUDA device scan and torch initialisation even if no
+# model is ever loaded.  We defer the import (and the model load) to the first
+# actual rerank() call via _get_model().
 
 
 class EmbeddingReranker:
-    """Lazy-loading embedding reranker.
+    """Lazy-loading semantic reranker.
 
-    SentenceTransformer is expensive to initialise (loads weights into memory).
-    We defer that work until the first actual rerank() call so that constructing
-    an EmbeddingReranker at import time (e.g. inside build_runtime_profile) does
-    not trigger a full model load.
+    Neither the `sentence_transformers` package nor the model weights are
+    touched until rerank() is called for the first time.
     """
 
     def __init__(self, model_name: str = EMBEDDING_MODEL_ID):
         self.model_name = model_name
-        self._model = None  # loaded on first use
+        self._model = None
 
     def _get_model(self):
-        if self._model is None and HAS_ST:
+        if self._model is not None:
+            return self._model
+        try:
+            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
             self._model = SentenceTransformer(self.model_name, cache_folder=HF_CACHE_DIR)
+        except Exception:  # noqa: BLE001
+            self._model = None
         return self._model
 
-    def rerank(self, query: str, results: list):
+    def rerank(self, query: str, results: list) -> list:
         model = self._get_model()
         if not model or not results:
             return results
@@ -43,7 +44,8 @@ class EmbeddingReranker:
         scored = []
         for item, emb in zip(results, d_embs):
             score = float(
-                (q_emb @ emb) / (((q_emb @ q_emb) ** 0.5) * ((emb @ emb) ** 0.5) + 1e-8)
+                (q_emb @ emb)
+                / (((q_emb @ q_emb) ** 0.5) * ((emb @ emb) ** 0.5) + 1e-8)
             )
             enriched = dict(item)
             enriched["embedding_score"] = score
