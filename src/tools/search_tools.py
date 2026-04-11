@@ -180,6 +180,43 @@ def _scrape_fallback(query: str, max_results: int = 5) -> list[dict]:
 # Multi-engine facade
 # ---------------------------------------------------------------------------
 
+
+def _playwright(query: str, max_results: int = 8) -> list[dict]:
+    """Headless browser fallback to bypass anti-bot protection."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return []
+
+    results = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            page.goto(f"https://html.duckduckgo.com/html/?q={query}", timeout=15000)
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(page.content(), "lxml")
+
+            for div in soup.select(".result__body")[:max_results]:
+                a = div.select_one(".result__a")
+                snip = div.select_one(".result__snippet")
+                if a and a.get("href"):
+                    results.append({
+                        "title": a.get_text(strip=True),
+                        "url": a.get("href"),
+                        "snippet": snip.get_text(strip=True) if snip else "",
+                        "domain": "",
+                        "engine": "playwright",
+                    })
+            browser.close()
+    except Exception:
+        pass
+    return results
+
 class MultiEngineSearch:
     """Try engines in priority order; return on first non-empty batch.
 
@@ -187,7 +224,7 @@ class MultiEngineSearch:
     for the ReAct agent.
     """
 
-    _ENGINE_ORDER = ["brave", "searxng", "ddg", "wikipedia", "scrape_fallback"]
+    _ENGINE_ORDER = ["brave", "searxng", "ddg", "wikipedia", "playwright", "scrape_fallback"]
 
     def search(self, query: str, max_results: int = 8) -> list[dict]:
         for engine in self._ENGINE_ORDER:
@@ -196,6 +233,7 @@ class MultiEngineSearch:
                 "searxng":        lambda q, n: _searxng(q, n),
                 "ddg":            lambda q, n: _ddg(q, n),
                 "wikipedia":      lambda q, n: _wikipedia(q, n),
+                "playwright":     lambda q, n: _playwright(q, n),
                 "scrape_fallback": lambda q, n: _scrape_fallback(q, n),
             }[engine]
             results = fn(query, max_results)

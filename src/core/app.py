@@ -21,6 +21,7 @@ from core.engram import EngramStore
 from core.memory import init_chat_store, build_memory
 from integrations.github_mcp import load_mcp_github_tools
 from tools.slurp_tools import slurp_url, slurp_to_obsidian
+from tools.browser_tools import browser_extract
 from tools.summary_tools import summarize_medical_text, summarize_meeting_text
 from tools.local_commands import handle_local_command
 from tools.search_tools import web_search, wikipedia_search, brave_search
@@ -177,7 +178,11 @@ async def build_agent(
             fn=brave_search, name="brave_search",
             description="Search using the Brave Search API (requires BRAVE_API_KEY env var)."
         ))
-        # --- Web fetch / slurp ---
+                # --- Web fetch / slurp ---
+        tools.append(FunctionTool.from_defaults(
+            fn=browser_extract, name="browser_extract",
+            description="Fetch the fully rendered text content of a webpage using a headless browser."
+        ))
         tools.append(FunctionTool.from_defaults(
             fn=slurp_url, name="slurp_url",
             description="Fetch a webpage, extract readable main content, convert it to Markdown, and save it locally."

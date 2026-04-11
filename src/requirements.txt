@@ -24,3 +24,4 @@ opentelemetry-sdk
 sentence-transformers
 transformers>=5
 wikipedia-api
+playwright
