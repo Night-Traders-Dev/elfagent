@@ -1,3 +1,5 @@
+from core.config import EMBEDDING_MODEL_ID, HF_CACHE_DIR
+
 try:
     from sentence_transformers import SentenceTransformer
     HAS_ST = True
@@ -7,9 +9,12 @@ except ImportError:
 
 
 class EmbeddingReranker:
-    def __init__(self, model_name="all-MiniLM-L6-v2"):
+    def __init__(self, model_name=EMBEDDING_MODEL_ID):
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name) if HAS_ST else None
+        self.model = (
+            SentenceTransformer(model_name, cache_folder=HF_CACHE_DIR)
+            if HAS_ST else None
+        )
 
     def rerank(self, query: str, results: list):
         if not HAS_ST or not results:

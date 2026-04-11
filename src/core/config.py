@@ -16,11 +16,16 @@ GITHUB_PAT = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 ENABLE_GITHUB_MCP = os.getenv("ENABLE_GITHUB_MCP", "0").lower() in {"1", "true", "yes", "on"}
 HF_CACHE_DIR = os.getenv("HF_CACHE_DIR", os.path.join("model_cache", "huggingface"))
 HF_HOME = os.getenv("HF_HOME", HF_CACHE_DIR)
+HF_HUB_CACHE = os.getenv("HF_HUB_CACHE", HF_CACHE_DIR)
+SENTENCE_TRANSFORMERS_HOME = os.getenv("SENTENCE_TRANSFORMERS_HOME", HF_CACHE_DIR)
 os.environ.setdefault("HF_HOME", HF_HOME)
+os.environ.setdefault("HF_HUB_CACHE", HF_HUB_CACHE)
 os.environ.setdefault("TRANSFORMERS_CACHE", HF_CACHE_DIR)
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", SENTENCE_TRANSFORMERS_HOME)
 USER_AGENT = "ElfAgent/3.0 (+https://github.com/)"
 MEDICAL_MODEL_ID = "Falconsai/medical_summarization"
 MEETING_MODEL_ID = "knkarthick/MEETING_SUMMARY"
+EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "sentence-transformers/all-MiniLM-L6-v2")
 RICH_REFRESH_PER_SECOND = float(os.getenv("RICH_REFRESH_PER_SECOND", "12"))
 ROUTER_ESCALATION_THRESHOLD = float(os.getenv("ROUTER_ESCALATION_THRESHOLD", "0.75"))
 TELEMETRY_DIR = os.getenv("TELEMETRY_DIR", "telemetry_logs")

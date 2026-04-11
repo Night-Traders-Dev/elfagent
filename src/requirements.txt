@@ -15,6 +15,7 @@ rich
 sentencepiece
 torch
 accelerate
+huggingface_hub
 jsonschema
 opentelemetry-api
 opentelemetry-sdk

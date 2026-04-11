@@ -11,6 +11,9 @@ Added a persistent JSONL engram store that saves compact turn gists and retrieve
 ### Feature 3 - TurboQuant runtime compression (`core/turboquant.py`, `orchestration/handoff.py`)
 Added a budget-aware compression path that trims snippets, caps evidence lists, and compacts structured handoff packets before they reach the main model.
 
+### Bug 7 - Weather queries were misclassified as simple code (`core/app.py`, `routing/policies.py`)
+Removed `"weather"` from the simple-code fast path and added explicit weather/time-sensitive routing so live queries like current weather go to web research.
+
 ### Bug 1 — Double MCP init / panel on every turn (`core/app.py`)
 `build_agent()` now accepts `preloaded_tools`. Per-turn agent rebuilds reuse the
 already-loaded tool list, so `load_mcp_github_tools` only runs once at startup.
